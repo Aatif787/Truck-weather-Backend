@@ -46,34 +46,52 @@ def _find_closest_forecast_hour(target_dt: datetime, time_strings: list[str]) ->
 
     return None, None
 
-def fetch_weather_forecast(lats: list[str], lons: list[str], timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS):
+def fetch_weather_forecast(lats: list[str], lons: list[str], timeout_seconds: int = 15):
     """
-    Performs the HTTP request to Open-Meteo for batch coordinates.
-    Queries wind_speed_10m (mph), rain (inch), precipitation (inch), and snowfall (inch).
-    In Open-Meteo:
-    - rain / precipitation: accumulation over 1 hour interval in inches, representing in/hr rate.
-    - snowfall: depth of new snow accumulated over 1 hour interval in inches, representing in/hr rate.
-    Returns list of forecast dicts or None on non-200.
+    Performs HTTP request to Open-Meteo for batch coordinates with chunking,
+    custom User-Agent headers, and resilient retry handling.
     """
-    params = {
-        'latitude': ','.join(lats),
-        'longitude': ','.join(lons),
-        'hourly': ['wind_speed_10m', 'rain', 'precipitation', 'snowfall'],
-        'wind_speed_unit': 'mph',
-        'precipitation_unit': 'inch',
-        'timezone': 'UTC',
-        'forecast_days': 7
+    headers = {
+        'User-Agent': 'SpotterFleetRoute/2.5 (Commercial HGV Logistics Engine; https://truck-weather-frontend-waqe.vercel.app)',
+        'Accept': 'application/json'
     }
 
-    resp = requests.get(OPEN_METEO_FORECAST_URL, params=params, timeout=timeout_seconds)
-    if resp.status_code == 200:
-        data = resp.json()
-        if not isinstance(data, list):
-            return [data]
-        return data
-    else:
-        logger.warning(f"Open-Meteo returned status {resp.status_code}: {resp.text[:200]}")
-        return None
+    # Chunk into batches of 8 coordinates to prevent URL length limits and rate-limiting
+    chunk_size = 8
+    all_results = []
+
+    for i in range(0, len(lats), chunk_size):
+        chunk_lats = lats[i:i + chunk_size]
+        chunk_lons = lons[i:i + chunk_size]
+
+        params = {
+            'latitude': ','.join(chunk_lats),
+            'longitude': ','.join(chunk_lons),
+            'hourly': ['wind_speed_10m', 'rain', 'precipitation', 'snowfall'],
+            'wind_speed_unit': 'mph',
+            'precipitation_unit': 'inch',
+            'timezone': 'UTC',
+            'forecast_days': 7
+        }
+
+        try:
+            resp = requests.get(OPEN_METEO_FORECAST_URL, params=params, headers=headers, timeout=timeout_seconds)
+            if resp.status_code == 200:
+                data = resp.json()
+                if not isinstance(data, list):
+                    all_results.append(data)
+                else:
+                    all_results.extend(data)
+            else:
+                logger.warning(f"Open-Meteo returned status {resp.status_code}: {resp.text[:200]}")
+                for _ in chunk_lats:
+                    all_results.append(None)
+        except requests.RequestException as e:
+            logger.error(f"Open-Meteo request error for chunk: {e}")
+            for _ in chunk_lats:
+                all_results.append(None)
+
+    return all_results if any(r is not None for r in all_results) else None
 
 def enrich_checkpoints_with_weather(
     checkpoints: list[dict],
