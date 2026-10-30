@@ -15,3 +15,4 @@ from backend.wsgi import application as app
 
 # Expose 'application' for standard WSGI servers
 application = app
+
