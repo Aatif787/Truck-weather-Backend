@@ -38,6 +38,10 @@ RISK_NUMERIC_SCORES = {
 # Conservative score penalty for UNKNOWN weather risk to avoid treating missing data as low risk
 UNKNOWN_RISK_SCORE = 3.0
 
+# Baseline commercial Class 8 HGV fuel consumption assumptions
+DEFAULT_DIESEL_PRICE_USD = 3.85
+DEFAULT_HGV_MPG = 6.5
+
 
 def calculate_represented_distances(checkpoints: list[dict[str, Any]], total_distance_miles: float) -> list[float]:
     """
@@ -72,8 +76,8 @@ def calculate_represented_distances(checkpoints: list[dict[str, Any]], total_dis
 
 def compute_route_weather_metrics(route: dict[str, Any]) -> dict[str, Any]:
     """
-    Calculates severe miles, high miles, no-travel miles, average risk score,
-    and analysis completeness for a single route.
+    Calculates severe miles, high miles, moderate miles, low miles, average risk score,
+    composite safety score, estimated fuel cost, and analysis completeness for a single route.
     """
     checkpoints = route.get("checkpoints", [])
     total_dist = float(route.get("distance_miles", 0.0))
@@ -81,8 +85,10 @@ def compute_route_weather_metrics(route: dict[str, Any]) -> dict[str, Any]:
 
     rep_distances = calculate_represented_distances(checkpoints, total_dist)
 
-    severe_miles = 0.0
+    low_miles = 0.0
+    moderate_miles = 0.0
     high_miles = 0.0
+    severe_miles = 0.0
     no_travel_miles = 0.0
     risk_scores = []
     has_no_travel = False
@@ -93,10 +99,14 @@ def compute_route_weather_metrics(route: dict[str, Any]) -> dict[str, Any]:
         rep_dist = rep_distances[idx] if idx < len(rep_distances) else 0.0
 
         # Accumulate mileages
-        if risk == "SEVERE":
-            severe_miles += rep_dist
+        if risk == "LOW":
+            low_miles += rep_dist
+        elif risk == "MODERATE":
+            moderate_miles += rep_dist
         elif risk == "HIGH":
             high_miles += rep_dist
+        elif risk == "SEVERE":
+            severe_miles += rep_dist
         elif risk == "NO_TRAVEL":
             no_travel_miles += rep_dist
             has_no_travel = True
@@ -117,10 +127,27 @@ def compute_route_weather_metrics(route: dict[str, Any]) -> dict[str, Any]:
         avg_risk = UNKNOWN_RISK_SCORE
         has_unknown = True
 
+    # Deterministic Safety Score Calculation (0.0 to 100.0)
+    # Severe weather miles deduct 10 pts/mi; High risk miles deduct 4 pts/mi; Avg risk deducts 12 pts/point
+    if has_no_travel:
+        safety_score = 0.0
+    else:
+        penalty = (severe_miles * 10.0) + (high_miles * 4.0) + (avg_risk * 12.0)
+        safety_score = max(5.0, round(100.0 - penalty, 1))
+
+    # Baseline commercial fuel estimation (Class 8 standard: 6.5 MPG, $3.85/gal)
+    fuel_gallons = round(total_dist / DEFAULT_HGV_MPG, 1) if DEFAULT_HGV_MPG > 0 else 0.0
+    fuel_cost_est = round(fuel_gallons * DEFAULT_DIESEL_PRICE_USD, 2)
+
+    route["low_miles"] = round(low_miles, 2)
+    route["moderate_miles"] = round(moderate_miles, 2)
     route["severe_miles"] = round(severe_miles, 2)
     route["high_miles"] = round(high_miles, 2)
     route["no_travel_miles"] = round(no_travel_miles, 2)
     route["average_risk_score"] = round(avg_risk, 3)
+    route["safety_score"] = safety_score
+    route["estimated_fuel_gallons"] = fuel_gallons
+    route["estimated_fuel_cost"] = fuel_cost_est
     route["has_no_travel"] = has_no_travel
     route["has_unknown_weather"] = has_unknown
     route["is_complete_analysis"] = not has_unknown
@@ -130,7 +157,7 @@ def compute_route_weather_metrics(route: dict[str, Any]) -> dict[str, Any]:
 
 def rank_and_recommend_routes(routes: list[dict[str, Any]]) -> dict[str, Any]:
     """
-    Ranks routes by:
+    Ranks candidate routes using a multi-criteria safety evaluation:
     1. Fewest severe miles
     2. Fewest high miles
     3. Lowest average risk score
@@ -140,13 +167,17 @@ def rank_and_recommend_routes(routes: list[dict[str, Any]]) -> dict[str, Any]:
     Applies strict safety rules:
     - Never recommends routes with NO_TRAVEL conditions.
     - Emits a clear warning if all routes contain NO_TRAVEL conditions.
+    - Generates transparent algorithmic rationale and trade-off comparison.
     """
     if not routes:
         return {
             "routes": [],
             "recommended_route_id": None,
             "has_recommended_route": False,
-            "warning": "No route options available."
+            "warning": "No route options available.",
+            "recommendation_rationale": "No routes available to analyze.",
+            "tradeoffs": {},
+            "severe_alerts": [],
         }
 
     # Step 1: Compute metrics for each route
@@ -174,6 +205,10 @@ def rank_and_recommend_routes(routes: list[dict[str, Any]]) -> dict[str, Any]:
     recommended_route_id = None
     warning_message = None
 
+    # Step 5: Identify Shortest & Fastest routes for trade-off analysis
+    shortest_route = min(ranked_routes, key=lambda r: float(r.get("distance_miles", 0.0))) if ranked_routes else None
+    fastest_route = min(ranked_routes, key=lambda r: float(r.get("duration_seconds", 0.0))) if ranked_routes else None
+
     if eligible_routes:
         best_route = eligible_routes[0]
         recommended_route_id = best_route["id"]
@@ -194,18 +229,95 @@ def rank_and_recommend_routes(routes: list[dict[str, Any]]) -> dict[str, Any]:
                 r["is_recommended"] = False
                 r["recommendation_status"] = "ALTERNATIVE"
                 r["recommendation_label"] = "Alternative Route"
+
+        # Construct transparent, rule-based algorithmic rationale
+        dist_diff = round(float(best_route.get("distance_miles", 0)) - float(shortest_route.get("distance_miles", 0)), 1) if shortest_route else 0
+        time_diff_mins = round((float(best_route.get("duration_seconds", 0)) - float(fastest_route.get("duration_seconds", 0))) / 60) if fastest_route else 0
+
+        best_name = best_route.get('name', f"Route {best_route.get('id', '')}")
+        shortest_name = shortest_route.get('name', f"Route {shortest_route.get('id', '')}") if shortest_route else ""
+        fastest_name = fastest_route.get('name', f"Route {fastest_route.get('id', '')}") if fastest_route else ""
+
+        rationale_items = [
+            f"{best_name} is selected by our deterministic multi-criteria safety evaluation "
+            f"because it minimizes commercial hazard exposure with {best_route.get('severe_miles', 0.0)} severe-weather miles "
+            f"and {best_route.get('high_miles', 0.0)} high-risk miles (Safety Score: {best_route.get('safety_score', 0)}/100)."
+        ]
+
+        if shortest_route and shortest_route['id'] != best_route['id']:
+            rationale_items.append(
+                f"The shortest alternative ({shortest_name}) saves {abs(dist_diff)} miles, "
+                f"but carries {shortest_route.get('severe_miles', 0.0)} severe miles and {shortest_route.get('high_miles', 0.0)} high-risk miles."
+            )
+        elif shortest_route and shortest_route['id'] == best_route['id']:
+            rationale_items.append("It is simultaneously the shortest direct highway path.")
+
+        if fastest_route and fastest_route['id'] != best_route['id']:
+            rationale_items.append(
+                f"The fastest alternative ({fastest_name}) is {abs(time_diff_mins)} min quicker, "
+                f"but exposes cargo to higher meteorological risk."
+            )
+        elif fastest_route and fastest_route['id'] == best_route['id'] and (not shortest_route or shortest_route['id'] != best_route['id']):
+            rationale_items.append("It also provides the fastest transit duration.")
+
+        recommendation_rationale = " ".join(rationale_items)
+
     else:
         # ALL routes contain NO_TRAVEL conditions
         warning_message = "DANGER: All route alternatives contain NO_TRAVEL weather conditions. Travel is not recommended."
+        recommendation_rationale = (
+            "NO DISPATCH RECOMMENDED: Every evaluated highway alternative crosses hazardous weather exceeding "
+            "safe Class 8 commercial operating thresholds (NO_TRAVEL conditions encountered)."
+        )
         for r in ranked_routes:
             r["is_recommended"] = False
             r["recommendation_status"] = "NO_TRAVEL_WARNING"
             r["recommendation_label"] = "Unsafe for Travel (NO_TRAVEL Conditions)"
 
+    # Step 6: Extract Severe Weather Alerts across all evaluated checkpoints
+    severe_alerts = []
+    for r in ranked_routes:
+        for cp in r.get("checkpoints", []):
+            risk = str(cp.get("final_risk", "")).upper()
+            if risk in ("SEVERE", "NO_TRAVEL"):
+                if risk == "NO_TRAVEL":
+                    rec_action = (
+                        "SUSPEND TRANSIT: Conditions exceed safe tractor-trailer operating parameters. "
+                        "Hold at current depot or seek designated safe parking until squall clears."
+                    )
+                else:
+                    rec_action = (
+                        "EXERCISE EXTREME CAUTION: Reduce highway speed to ≤45 mph, maintain 8+ seconds headway, "
+                        "and anticipate sudden localized crosswind gusts."
+                    )
+
+                severe_alerts.append({
+                    "route_id": r.get("id"),
+                    "route_name": r.get("name"),
+                    "checkpoint_index": cp.get("checkpoint_index"),
+                    "distance_from_origin_miles": cp.get("distance_from_origin_miles"),
+                    "coordinates": cp.get("coordinates"),
+                    "estimated_arrival_time": cp.get("estimated_arrival_time"),
+                    "risk": risk,
+                    "wind_speed_mph": cp.get("wind_speed_mph"),
+                    "rain_intensity_in_hr": cp.get("rain_intensity_in_hr"),
+                    "snow_intensity_in_hr": cp.get("snow_intensity_in_hr"),
+                    "load_adjusted_wind_risk": cp.get("load_adjusted_wind_risk"),
+                    "recommended_action": rec_action,
+                })
+
+    tradeoffs = {
+        "safest_route_id": recommended_route_id,
+        "shortest_route_id": shortest_route["id"] if shortest_route else None,
+        "fastest_route_id": fastest_route["id"] if fastest_route else None,
+    }
+
     return {
         "routes": ranked_routes,
         "recommended_route_id": recommended_route_id,
         "has_recommended_route": recommended_route_id is not None,
-        "warning": warning_message
+        "warning": warning_message,
+        "recommendation_rationale": recommendation_rationale,
+        "tradeoffs": tradeoffs,
+        "severe_alerts": severe_alerts,
     }
-

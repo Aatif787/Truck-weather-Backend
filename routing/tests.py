@@ -603,6 +603,106 @@ class RouteRankingTests(TestCase):
         self.assertTrue(res["has_unknown_weather"])
         self.assertFalse(res["is_complete_analysis"])
 
+    def test_safety_score_and_fuel_metrics(self):
+        # Clean route (100 miles, all LOW risk)
+        cps_clean = [
+            {"distance_from_origin_miles": 0.0, "final_risk": "LOW"},
+            {"distance_from_origin_miles": 50.0, "final_risk": "LOW"},
+            {"distance_from_origin_miles": 100.0, "final_risk": "LOW"},
+        ]
+        clean_route = compute_route_weather_metrics({"distance_miles": 100.0, "checkpoints": cps_clean})
+        self.assertGreaterEqual(clean_route["safety_score"], 90.0)
+        expected_gallons = round(100.0 / 6.5, 1)
+        expected_cost = round(expected_gallons * 3.85, 2)
+        self.assertEqual(clean_route["estimated_fuel_gallons"], expected_gallons)
+        self.assertEqual(clean_route["estimated_fuel_cost"], expected_cost)
+
+        # Risky route with severe miles
+        cps_risky = [
+            {"distance_from_origin_miles": 0.0, "final_risk": "SEVERE"},
+            {"distance_from_origin_miles": 50.0, "final_risk": "SEVERE"},
+            {"distance_from_origin_miles": 100.0, "final_risk": "SEVERE"},
+        ]
+        risky_route = compute_route_weather_metrics({"distance_miles": 100.0, "checkpoints": cps_risky})
+        self.assertLess(risky_route["safety_score"], clean_route["safety_score"])
+
+        # NO_TRAVEL route
+        cps_no_travel = [
+            {"distance_from_origin_miles": 0.0, "final_risk": "NO_TRAVEL"},
+            {"distance_from_origin_miles": 100.0, "final_risk": "LOW"},
+        ]
+        no_travel_route = compute_route_weather_metrics({"distance_miles": 100.0, "checkpoints": cps_no_travel})
+        self.assertEqual(no_travel_route["safety_score"], 0.0)
+
+    def test_tradeoffs_and_rationale_generation(self):
+        # Route 1: Safe but slightly longer
+        r1 = {
+            "id": "r1",
+            "name": "Northern Bypass",
+            "distance_miles": 120.0,
+            "duration_seconds": 7200.0,
+            "checkpoints": [
+                {"distance_from_origin_miles": 0.0, "final_risk": "LOW"},
+                {"distance_from_origin_miles": 120.0, "final_risk": "LOW"},
+            ]
+        }
+        # Route 2: Shortest and fastest, but high risk
+        r2 = {
+            "id": "r2",
+            "name": "Direct Highway",
+            "distance_miles": 100.0,
+            "duration_seconds": 6000.0,
+            "checkpoints": [
+                {"distance_from_origin_miles": 0.0, "final_risk": "HIGH"},
+                {"distance_from_origin_miles": 100.0, "final_risk": "HIGH"},
+            ]
+        }
+
+        result = rank_and_recommend_routes([r1, r2])
+        self.assertEqual(result["recommended_route_id"], "r1")
+        self.assertEqual(result["tradeoffs"]["safest_route_id"], "r1")
+        self.assertEqual(result["tradeoffs"]["shortest_route_id"], "r2")
+        self.assertEqual(result["tradeoffs"]["fastest_route_id"], "r2")
+        self.assertIn("Northern Bypass", result["recommendation_rationale"])
+        self.assertIn("Direct Highway", result["recommendation_rationale"])
+
+    def test_severe_alerts_extraction(self):
+        r_severe = {
+            "id": "r-alert",
+            "name": "I-80 Corridor",
+            "distance_miles": 50.0,
+            "duration_seconds": 3600.0,
+            "checkpoints": [
+                {
+                    "checkpoint_index": 1,
+                    "distance_from_origin_miles": 25.0,
+                    "coordinates": [-88.0, 41.5],
+                    "estimated_arrival_time": "2026-10-30T15:00:00Z",
+                    "final_risk": "SEVERE",
+                    "wind_speed_mph": 48.0,
+                    "rain_intensity_in_hr": 0.1,
+                    "snow_intensity_in_hr": 0.0,
+                },
+                {
+                    "checkpoint_index": 2,
+                    "distance_from_origin_miles": 50.0,
+                    "coordinates": [-88.5, 41.5],
+                    "estimated_arrival_time": "2026-10-30T16:00:00Z",
+                    "final_risk": "NO_TRAVEL",
+                    "wind_speed_mph": 65.0,
+                    "rain_intensity_in_hr": 0.0,
+                    "snow_intensity_in_hr": 1.5,
+                }
+            ]
+        }
+        result = rank_and_recommend_routes([r_severe])
+        alerts = result.get("severe_alerts", [])
+        self.assertEqual(len(alerts), 2)
+        self.assertEqual(alerts[0]["risk"], "SEVERE")
+        self.assertIn("EXERCISE EXTREME CAUTION", alerts[0]["recommended_action"])
+        self.assertEqual(alerts[1]["risk"], "NO_TRAVEL")
+        self.assertIn("SUSPEND TRANSIT", alerts[1]["recommended_action"])
+
 
 class RoutingAndForecastEdgeCaseTests(TestCase):
     def setUp(self):

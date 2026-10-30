@@ -159,6 +159,9 @@ class RouteCalculationView(APIView):
                 "recommended_route_id": ranking_result["recommended_route_id"],
                 "has_recommended_route": ranking_result["has_recommended_route"],
                 "warning": ranking_result["warning"],
+                "recommendation_rationale": ranking_result.get("recommendation_rationale", ""),
+                "tradeoffs": ranking_result.get("tradeoffs", {}),
+                "severe_alerts": ranking_result.get("severe_alerts", []),
                 "routes": ranking_result["routes"]
             }, status=status.HTTP_200_OK)
 

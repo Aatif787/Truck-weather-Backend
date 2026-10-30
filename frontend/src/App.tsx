@@ -1,25 +1,12 @@
 import { useState, useEffect, useRef, type FormEvent } from 'react'
 import './App.css'
-import { MapView, type RouteItem, type Checkpoint } from './components/MapView'
-
-interface LocationInfo {
-  name: string
-  coordinates: [number, number]
-}
-
-interface RouteAnalysisResponse {
-  origin: LocationInfo
-  destination: LocationInfo
-  departure_datetime: string
-  load_weight_lbs: number
-  sampling_interval_miles: number
-  routes_count: number
-  recommended_route_id: string | null
-  has_recommended_route: boolean
-  warning: string | null
-  routes: RouteItem[]
-  error?: string
-}
+import { MapView } from './components/MapView'
+import { SafetyDashboard } from './components/SafetyDashboard'
+import { RecommendationCard } from './components/RecommendationCard'
+import { SevereAlertsBanner } from './components/SevereAlertsBanner'
+import { RouteComparisonChart } from './components/RouteComparisonChart'
+import { generateTripReportPdf } from './services/pdfReport'
+import type { RouteAnalysisResponse, RouteItem, Checkpoint } from './types'
 
 function formatDuration(seconds: number): string {
   const totalMins = Math.round(seconds / 60)
@@ -98,13 +85,16 @@ function getLoadRuleAdvice(weight: number) {
   }
 }
 
-
 function App() {
   const [origin, setOrigin] = useState('Heidelberg, Germany')
   const [destination, setDestination] = useState('Mannheim, Germany')
   const [departureDatetime, setDepartureDatetime] = useState(getDefaultDateTime())
   const [loadWeightLbs, setLoadWeightLbs] = useState(35000)
   const [samplingIntervalMiles, setSamplingIntervalMiles] = useState(25)
+
+  // Configurable Commercial Class 8 Fuel Baseline
+  const [fuelPrice, setFuelPrice] = useState(3.85)
+  const [fuelMpg, setFuelMpg] = useState(6.5)
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -150,15 +140,39 @@ function App() {
       `Gross Cargo: ${Number(loadWeightLbs).toLocaleString()} lbs`,
       `Total Distance: ${route.distance_miles} miles`,
       `Est. Driving Duration: ${formatDuration(route.duration_seconds)}`,
+      `Safety Score: ${route.safety_score !== undefined ? `${Math.round(route.safety_score)}/100` : 'N/A'}`,
       `Severe Weather Miles: ${route.severe_miles ?? 0} mi`,
       `High Risk Miles: ${route.high_miles ?? 0} mi`,
-      `Composite Risk Score: ${route.average_risk_score ?? 0}`,
+      `Est. Fuel Gallons: ${(route.distance_miles / fuelMpg).toFixed(1)} gal (@ ${fuelMpg} MPG)`,
+      `Est. Fuel Cost: $${((route.distance_miles / fuelMpg) * fuelPrice).toFixed(2)} (@ $${fuelPrice}/gal)`,
       `Checkpoints Monitored: ${route.checkpoints_count || route.checkpoints?.length || 0}`,
-      'Safety Compliance: Automated OpenRouteService + Open-Meteo verified',
+      'Safety Compliance: Automated OpenRouteService HGV + Open-Meteo verified',
     ].join('\n')
 
     navigator.clipboard.writeText(manifest)
     showToast(`Copied ${route.name} manifest to clipboard!`)
+  }
+
+  const handleDownloadPdf = () => {
+    if (!data) return
+    const curSelectedRoute = data.routes.find((r) => r.id === selectedRouteId) || data.routes[0]
+    generateTripReportPdf({
+      data,
+      selectedRoute: curSelectedRoute,
+      fuelPrice,
+      fuelMpg,
+    })
+    showToast('Downloaded Trip Safety Report (PDF)')
+  }
+
+  const handleInspectCheckpointFromAlert = (routeId: string, checkpointIndex: number) => {
+    setSelectedRouteId(routeId)
+    const targetRoute = data?.routes.find((r) => r.id === routeId)
+    const targetCp = targetRoute?.checkpoints.find((cp) => cp.checkpoint_index === checkpointIndex)
+    if (targetCp) {
+      setSelectedCheckpoint(targetCp)
+      mapViewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
   }
 
   const resultsRef = useRef<HTMLDivElement>(null)
@@ -278,6 +292,8 @@ function App() {
   }
 
   const recommendedRoute = data?.routes.find((r) => r.id === data.recommended_route_id)
+  const currentSelectedRoute = data?.routes.find((r) => r.id === selectedRouteId) || data?.routes[0]
+  const severeAlertsCount = (data?.severe_alerts || []).filter((a) => a.route_id === selectedRouteId).length
 
   return (
     <div className="app-container">
@@ -303,7 +319,7 @@ function App() {
             <div className="brand-logo-mark" aria-hidden="true">
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="1" y="3" width="15" height="13" rx="1"/>
-                <polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
+                <polygon points="16 8 20 8 23 11 23 16 16 16 8"/>
                 <circle cx="5.5" cy="18.5" r="2.5"/>
                 <circle cx="18.5" cy="18.5" r="2.5"/>
               </svg>
@@ -311,7 +327,7 @@ function App() {
             <div>
               <div className="brand-title-row">
                 <h1>Spotter FleetRoute</h1>
-                <span className="brand-tag">DISPATCH v2.4</span>
+                <span className="brand-tag">DISPATCH v2.5</span>
               </div>
               <p className="subtitle">
                 Commercial HGV Route Optimization & Checkpoint Weather Risk Intelligence
@@ -322,7 +338,7 @@ function App() {
           <div className="header-telemetry-status">
             <div className="live-status-pill">
               <span className="status-pulse-dot" />
-              <span>Telemetry: ORS + Open-Meteo Live</span>
+              <span>Telemetry: ORS + Open-Meteo Deterministic</span>
             </div>
             {data && (
               <button
@@ -543,44 +559,94 @@ function App() {
               </div>
             )}
 
-            {/* Top Recommendation Banner if safe route found */}
-            {data.has_recommended_route && recommendedRoute && (
-              <div className="recommendation-banner scroll-reveal">
-                <div className="recommendation-badge-pill">★ BEST ROUTE</div>
-                <div className="recommendation-content">
-                  <h3>
-                    Recommended: {recommendedRoute.name} ({recommendedRoute.id})
-                  </h3>
-                  <p>
-                    {recommendedRoute.distance_miles} miles |{' '}
-                    {formatDuration(recommendedRoute.duration_seconds)} | Severe Miles:{' '}
-                    <strong>{recommendedRoute.severe_miles ?? 0} mi</strong> | High Miles:{' '}
-                    <strong>{recommendedRoute.high_miles ?? 0} mi</strong> | Avg Risk Score:{' '}
-                    <strong>{recommendedRoute.average_risk_score ?? 0}</strong>
-                  </p>
-                </div>
-              </div>
-            )}
-
             {/* Trip Info Header */}
             <div className="trip-summary scroll-reveal">
-              <h3>Trip Analysis Overview</h3>
+              <div className="trip-summary-header">
+                <h3>Trip Dispatch Analysis Overview</h3>
+                <button
+                  type="button"
+                  className="trip-download-pdf-btn"
+                  onClick={handleDownloadPdf}
+                  title="Generate comprehensive PDF dispatch report"
+                >
+                  <span>📄 PDF Report</span>
+                </button>
+              </div>
               <p>
                 <strong>Origin:</strong> {data.origin.name} <br />
                 <strong>Destination:</strong> {data.destination.name} <br />
                 <strong>Departure:</strong> {formatDateTime(data.departure_datetime)} |{' '}
                 <strong>Cargo Weight:</strong> {data.load_weight_lbs.toLocaleString()} lbs |{' '}
-                <strong>Interval:</strong> {data.sampling_interval_miles} miles
+                <strong>Sampling Interval:</strong> {data.sampling_interval_miles} miles |{' '}
+                <strong>Baseline Fuel:</strong> ${fuelPrice.toFixed(2)}/gal @ {fuelMpg.toFixed(1)} MPG
               </p>
             </div>
 
-            {/* 1. Route Comparison Cards */}
+            {/* FEATURE 1: SAFETY ANALYTICS DASHBOARD */}
+            {currentSelectedRoute && (
+              <SafetyDashboard
+                selectedRoute={currentSelectedRoute}
+                allRoutes={data.routes}
+                onSelectRoute={(id) => setSelectedRouteId(id)}
+                severeAlertsCount={severeAlertsCount}
+                onDownloadPdf={handleDownloadPdf}
+              />
+            )}
+
+            {/* FEATURE 2: INTELLIGENT ROUTE RECOMMENDATION & TRADEOFF MATRIX */}
+            <RecommendationCard
+              recommendationRationale={data.recommendation_rationale}
+              tradeoffs={data.tradeoffs}
+              recommendedRoute={recommendedRoute}
+              allRoutes={data.routes}
+              onSelectRoute={(id) => setSelectedRouteId(id)}
+              warning={data.warning}
+            />
+
+            {/* FEATURE 3: SEVERE WEATHER ALERTS */}
+            <SevereAlertsBanner
+              severeAlerts={data.severe_alerts || []}
+              selectedRouteId={selectedRouteId}
+              selectedRouteName={currentSelectedRoute?.name}
+              onInspectCheckpoint={handleInspectCheckpointFromAlert}
+            />
+
+            {/* FEATURE 5: ROUTE COMPARISON & FUEL COST MODEL + SVG BAR CHART */}
+            <RouteComparisonChart
+              routes={data.routes}
+              selectedRouteId={selectedRouteId}
+              onSelectRoute={(id) => setSelectedRouteId(id)}
+              fuelPrice={fuelPrice}
+              fuelMpg={fuelMpg}
+              onUpdateFuel={(price, mpg) => {
+                setFuelPrice(price)
+                setFuelMpg(mpg)
+              }}
+            />
+
+            {/* FEATURE 6: INTERACTIVE MAP EXPERIENCE */}
+            <div ref={mapViewRef} className="map-scroll-wrapper scroll-reveal">
+              <MapView
+                routes={data.routes}
+                selectedRouteId={selectedRouteId}
+                onSelectRoute={(id) => setSelectedRouteId(id)}
+                selectedCheckpoint={selectedCheckpoint}
+                onSelectCheckpoint={(cp) => setSelectedCheckpoint(cp)}
+                originName={data.origin.name}
+                destinationName={data.destination.name}
+                departureDatetime={data.departure_datetime}
+              />
+            </div>
+
+            {/* DETAILED ROUTE CARDS & CHECKPOINTS INSPECTION */}
             <div className="route-comparison-section scroll-reveal">
-              <h3>Route Options Ranked by Safety ({data.routes_count})</h3>
+              <h3>Detailed Route Cards & Waypoint Itinerary ({data.routes_count})</h3>
               <div className="routes-list">
                 {data.routes.map((route) => {
                   const isSelected = selectedRouteId === route.id
                   const isExpanded = expandedRouteId === route.id
+                  const estGallons = (route.distance_miles / fuelMpg)
+                  const estCost = estGallons * fuelPrice
 
                   return (
                     <div
@@ -643,27 +709,29 @@ function App() {
                       <div className="route-details">
                         <div className="detail-item">
                           <span className="label">Total Distance</span>
-                          <span className="value">{route.distance_miles} miles</span>
+                          <span className="value">{route.distance_miles.toFixed(1)} miles</span>
                         </div>
                         <div className="detail-item">
                           <span className="label">Est. Duration</span>
                           <span className="value">{formatDuration(route.duration_seconds)}</span>
                         </div>
                         <div className="detail-item">
-                          <span className="label">Severe Weather Miles</span>
+                          <span className="label">Safety Score</span>
+                          <span className="value">
+                            {route.safety_score !== undefined ? `${Math.round(route.safety_score)}/100` : 'N/A'}
+                          </span>
+                        </div>
+                        <div className="detail-item">
+                          <span className="label">Severe Miles</span>
                           <span className="value">{route.severe_miles ?? 0} mi</span>
                         </div>
                         <div className="detail-item">
-                          <span className="label">High Weather Miles</span>
+                          <span className="label">High Miles</span>
                           <span className="value">{route.high_miles ?? 0} mi</span>
                         </div>
                         <div className="detail-item">
-                          <span className="label">Avg Risk Score</span>
-                          <span className="value">{route.average_risk_score ?? 0}</span>
-                        </div>
-                        <div className="detail-item">
-                          <span className="label">Checkpoints</span>
-                          <span className="value">{route.checkpoints_count} points</span>
+                          <span className="label">Est. Fuel Cost</span>
+                          <span className="value">${estCost.toFixed(2)} (est)</span>
                         </div>
                       </div>
 
@@ -690,7 +758,7 @@ function App() {
                                   <tr key={cp.checkpoint_index}>
                                     <td>
                                       <strong>
-                                        CP {cp.checkpoint_index} ({cp.distance_from_origin_miles} mi)
+                                        CP {cp.checkpoint_index + 1} ({cp.distance_from_origin_miles.toFixed(1)} mi)
                                       </strong>
                                     </td>
                                     <td>{formatDateTime(cp.estimated_arrival_time)}</td>
@@ -754,20 +822,6 @@ function App() {
                   )
                 })}
               </div>
-            </div>
-
-            {/* 2. Interactive Map Section */}
-            <div ref={mapViewRef} className="map-scroll-wrapper scroll-reveal">
-              <MapView
-                routes={data.routes}
-                selectedRouteId={selectedRouteId}
-                onSelectRoute={(id) => setSelectedRouteId(id)}
-                selectedCheckpoint={selectedCheckpoint}
-                onSelectCheckpoint={(cp) => setSelectedCheckpoint(cp)}
-                originName={data.origin.name}
-                destinationName={data.destination.name}
-                departureDatetime={data.departure_datetime}
-              />
             </div>
           </div>
         )}
