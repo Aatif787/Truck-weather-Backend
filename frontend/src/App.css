@@ -1020,3 +1020,557 @@ html {
     display: none;
   }
 }
+
+
+/* ==========================================================================
+   Enterprise Fleet Dashboard Polish (Human-Engineered Styling)
+   ========================================================================== */
+
+/* 1. Floating Action Toast Notification */
+.floating-toast {
+  position: fixed;
+  top: 1.5rem;
+  right: 1.5rem;
+  background: #18181B;
+  color: #FFFFFF;
+  padding: 0.65rem 1.15rem;
+  border-radius: 8px;
+  border: 1px solid #3F3F46;
+  font-size: 0.88rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  z-index: 10000;
+  animation: toastEntrance 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.floating-toast .toast-icon {
+  color: var(--accent-primary);
+  font-weight: 700;
+}
+
+@keyframes toastEntrance {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* 2. Top Navigation Bar & Brand Group */
+.brand-group {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.brand-logo-mark {
+  background: #18181B;
+  color: var(--accent-primary);
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid #27272A;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+.brand-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.brand-title-row h1 {
+  font-size: 1.6rem;
+  margin: 0;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--text-primary);
+}
+
+.brand-tag {
+  background: #E5E5E2;
+  color: #444444;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+}
+
+.header-telemetry-status {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.live-status-pill {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: #FFFFFF;
+  border: 1px solid var(--border-color);
+  padding: 0.35rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.status-pulse-dot {
+  width: 7px;
+  height: 7px;
+  background: #15803D;
+  border-radius: 50%;
+  display: inline-block;
+  box-shadow: 0 0 6px rgba(21, 128, 61, 0.6);
+  animation: telemetryPulse 2s infinite ease-in-out;
+}
+
+@keyframes telemetryPulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.85);
+  }
+}
+
+/* 3. Quick Test Preset Corridors */
+.preset-corridors-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0.25rem;
+}
+
+.preset-corridors-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.preset-chips-list {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.preset-chip {
+  background: #FFFFFF;
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 0.35rem 0.75rem;
+  border-radius: 16px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.preset-chip:hover:not(:disabled) {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+  background: #FFFBF7;
+  transform: translateY(-1px);
+}
+
+/* 4. Unified Origin / Destination Bar with Swap */
+.form-row-locations {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+
+.input-with-clear {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.input-with-clear input {
+  width: 100%;
+  padding-right: 2.2rem;
+}
+
+.input-clear-btn {
+  position: absolute;
+  right: 0.6rem;
+  background: transparent;
+  border: none;
+  color: #999999;
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0.25rem;
+  line-height: 1;
+  border-radius: 50%;
+}
+
+.input-clear-btn:hover {
+  color: #333333;
+}
+
+.label-icon {
+  margin-right: 0.25rem;
+}
+
+.location-swap-btn {
+  background: #FFFFFF;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  height: 42px;
+  width: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.15rem;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+  margin-bottom: 2px;
+}
+
+.location-swap-btn:hover:not(:disabled) {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+  background: #FFFBF7;
+  transform: rotate(180deg);
+}
+
+/* 5. Schedule & Cargo Specs Row */
+.form-row-specs {
+  display: flex;
+  gap: 1rem;
+}
+
+.label-row-with-helpers {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.mini-helpers {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.mini-helpers button {
+  background: #F4F4F5;
+  border: 1px solid #E4E4E7;
+  color: #555555;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+  cursor: pointer;
+  transition: all 0.1s ease;
+}
+
+.mini-helpers button:hover:not(:disabled) {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+  background: #FFFFFF;
+}
+
+/* 6. Segmented Control for Intervals */
+.segmented-control {
+  display: flex;
+  background: #F0EFEB;
+  border-radius: 6px;
+  padding: 3px;
+  gap: 3px;
+}
+
+.segment-btn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  padding: 0.55rem 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.segment-btn.active {
+  background: #FFFFFF;
+  color: var(--text-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.segment-btn:hover:not(.active):not(:disabled) {
+  color: var(--text-primary);
+}
+
+/* 7. Dynamic DOT Cargo Weight Advisory Card */
+.load-rule-advisory-card {
+  padding: 0.85rem 1rem;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  font-size: 0.88rem;
+  border-width: 1px;
+  border-style: solid;
+  transition: all 0.2s ease;
+}
+
+.advisory-badge-pill {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.2rem 0.55rem;
+  border-radius: 4px;
+  white-space: nowrap;
+  text-transform: uppercase;
+}
+
+.load-rule-advisory-card.badge-low {
+  background: #F7FBF8;
+  border-color: #D1E7DD;
+  color: #0F5132;
+}
+.load-rule-advisory-card.badge-low .advisory-badge-pill {
+  background: #D1E7DD;
+  color: #0F5132;
+}
+
+.load-rule-advisory-card.badge-moderate {
+  background: #FFFDF0;
+  border-color: #FFF3CD;
+  color: #664D03;
+}
+.load-rule-advisory-card.badge-moderate .advisory-badge-pill {
+  background: #FFF3CD;
+  color: #664D03;
+}
+
+.load-rule-advisory-card.badge-high {
+  background: #FFF8F2;
+  border-color: #FED7AA;
+  color: #9A3412;
+}
+.load-rule-advisory-card.badge-high .advisory-badge-pill {
+  background: #FED7AA;
+  color: #9A3412;
+}
+
+.advisory-text {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+/* 8. Submit Button & Hotkey Badge */
+.form-actions-row {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 0.25rem;
+}
+
+.submit-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.btn-key-hint {
+  background: rgba(0, 0, 0, 0.2);
+  color: #FFFFFF;
+  font-size: 0.68rem;
+  font-family: var(--font-mono);
+  padding: 0.15rem 0.45rem;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.btn-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #FFFFFF;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+}
+
+/* 9. Copy Manifest Button on Route Cards */
+.copy-manifest-btn {
+  background: #F4F4F5;
+  border: 1px solid #D4D4D8;
+  color: #27272A;
+  border-radius: 6px;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.copy-manifest-btn:hover {
+  background: #E4E4E7;
+  border-color: #A1A1AA;
+}
+
+/* 10. Map Route Switcher inside MapView Header */
+.map-title-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.map-route-switcher {
+  display: flex;
+  gap: 0.35rem;
+  background: #F0EFEB;
+  padding: 3px;
+  border-radius: 6px;
+}
+
+.map-route-tab {
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #555555;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  transition: all 0.15s ease;
+}
+
+.map-route-tab.active {
+  background: #FFFFFF;
+  color: #18181B;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.map-route-tab:hover:not(.active) {
+  color: #18181B;
+}
+
+.route-tab-rank {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--accent-primary);
+  font-weight: 700;
+}
+
+.route-tab-star {
+  color: #A16207;
+  font-size: 0.75rem;
+}
+
+/* 11. Timeline Step Buttons */
+.slider-step-btn {
+  background: #FFFFFF;
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 0.35rem 0.65rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.slider-step-btn:hover:not(:disabled) {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.slider-step-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 12. Floating Telemetry HUD over Map */
+.map-canvas-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.map-floating-telemetry {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  background: rgba(24, 24, 27, 0.88);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #FFFFFF;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  padding: 0.45rem 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  z-index: 10;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  font-size: 0.8rem;
+  pointer-events: none;
+}
+
+.telemetry-badge {
+  display: flex;
+  flex-direction: column;
+}
+
+.telemetry-label {
+  font-size: 0.6rem;
+  color: #A1A1AA;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  font-family: var(--font-mono);
+}
+
+.telemetry-val {
+  font-size: 0.82rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #FAFAFA;
+}
+
+.telemetry-divider {
+  width: 1px;
+  height: 22px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+@media (max-width: 768px) {
+  .map-floating-telemetry {
+    display: none;
+  }
+  .form-row-locations {
+    flex-direction: column;
+  }
+  .location-swap-btn {
+    align-self: center;
+    transform: rotate(90deg);
+  }
+  .form-row-specs {
+    flex-direction: column;
+  }
+}

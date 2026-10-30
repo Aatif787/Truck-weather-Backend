@@ -501,14 +501,34 @@ export function MapView({
     <div className="map-view-wrapper">
       <div className="map-header">
         <div className="map-title-row">
-          <h3>Trip Route & Weather Corridor Map</h3>
-          <span className="active-route-badge">
-            Viewing: {selectedRoute?.name || 'Selected Route'}
-          </span>
+          <div className="map-title-group">
+            <h3>Corridor Route & Weather Radar Map</h3>
+            <p className="map-subtitle">
+              Heavy-vehicle road geometry with risk-halo heatmap & checkpoint telemetry
+            </p>
+          </div>
+          {routes && routes.length > 1 && (
+            <div className="map-route-switcher" role="tablist" aria-label="Route options">
+              {routes.map((r, idx) => {
+                const isSelected = r.id === selectedRoute?.id
+                return (
+                  <button
+                    key={r.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={isSelected}
+                    className={`map-route-tab ${isSelected ? 'active' : ''}`}
+                    onClick={() => onSelectRoute(r.id)}
+                  >
+                    <span className="route-tab-rank">#{r.rank ?? idx + 1}</span>
+                    <span className="route-tab-name">{r.name}</span>
+                    {r.is_recommended && <span className="route-tab-star">★</span>}
+                  </button>
+                )
+              })}
+            </div>
+          )}
         </div>
-        <p className="map-subtitle">
-          Showing road geometry, weather corridor risk halo, and interactive checkpoints.
-        </p>
       </div>
 
       {/* TASK 1: 0–48 Hour Forecast Time Slider Component */}
@@ -531,6 +551,24 @@ export function MapView({
           </div>
 
           <div className="slider-quick-buttons">
+            <button
+              type="button"
+              className="slider-step-btn"
+              onClick={() => setSliderOffset((prev) => Math.max(0, (prev ?? 0) - 1))}
+              title="Step back 1 hour"
+              disabled={sliderOffset === 0}
+            >
+              ◀ -1h
+            </button>
+            <button
+              type="button"
+              className="slider-step-btn"
+              onClick={() => setSliderOffset((prev) => Math.min(48, (prev ?? 0) + 1))}
+              title="Step forward 1 hour"
+              disabled={sliderOffset === 48}
+            >
+              ▶ +1h
+            </button>
             <button
               type="button"
               className={`slider-btn ${sliderOffset === null ? 'btn-active' : ''}`}
@@ -610,8 +648,31 @@ export function MapView({
         )}
       </div>
 
-      {/* Map Canvas */}
-      <div className="map-canvas-container" ref={mapContainerRef} />
+      {/* Map Canvas with Floating Telemetry Overlay */}
+      <div className="map-canvas-wrapper">
+        <div className="map-floating-telemetry">
+          <div className="telemetry-badge">
+            <span className="telemetry-label">ACTIVE ROUTE</span>
+            <span className="telemetry-val">{selectedRoute?.name || 'Selected'}</span>
+          </div>
+          <div className="telemetry-divider" />
+          <div className="telemetry-badge">
+            <span className="telemetry-label">TOTAL DISTANCE</span>
+            <span className="telemetry-val">{selectedRoute?.distance_miles} mi</span>
+          </div>
+          <div className="telemetry-divider" />
+          <div className="telemetry-badge">
+            <span className="telemetry-label">EST. DURATION</span>
+            <span className="telemetry-val">{Math.round((selectedRoute?.duration_seconds ?? 0) / 60)} min</span>
+          </div>
+          <div className="telemetry-divider" />
+          <div className="telemetry-badge">
+            <span className="telemetry-label">CHECKPOINTS</span>
+            <span className="telemetry-val">{selectedRoute?.checkpoints?.length ?? 0} pts</span>
+          </div>
+        </div>
+        <div className="map-canvas-container" ref={mapContainerRef} />
+      </div>
 
       {/* Weather Corridor Legend */}
       <div className="corridor-legend">

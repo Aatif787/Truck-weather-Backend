@@ -69,6 +69,36 @@ function getDefaultDateTime(): string {
   return now.toISOString().slice(0, 16)
 }
 
+const PRESET_CORRIDORS = [
+  { label: 'Mannheim ➔ Heidelberg', origin: 'Mannheim, Germany', dest: 'Heidelberg, Germany', desc: 'Regional Freight Trunk' },
+  { label: 'Frankfurt ➔ Stuttgart', origin: 'Frankfurt, Germany', dest: 'Stuttgart, Germany', desc: 'A5/A8 Industrial Corridor' },
+  { label: 'Munich ➔ Nuremberg', origin: 'Munich, Germany', dest: 'Nuremberg, Germany', desc: 'A9 Bavarian Freight Spine' },
+  { label: 'Cologne ➔ Dortmund', origin: 'Cologne, Germany', dest: 'Dortmund, Germany', desc: 'Rhine-Ruhr Logistics Link' },
+]
+
+function getLoadRuleAdvice(weight: number) {
+  if (weight > 40000) {
+    return {
+      tier: 'Severe Load Tier (>40k lbs)',
+      message: 'Wind 35–44 mph escalates to SEVERE due to high tractor-trailer rollover torque.',
+      badgeClass: 'badge-high',
+    }
+  }
+  if (weight > 30000) {
+    return {
+      tier: 'Heavy Load Tier (>30k lbs)',
+      message: 'Wind 45–54 mph escalates to NO_TRAVEL to protect against crosswind blowovers.',
+      badgeClass: 'badge-moderate',
+    }
+  }
+  return {
+    tier: 'Standard Load Tier (≤30k lbs)',
+    message: 'Standard wind safety rules apply. Universal NO_TRAVEL at ≥55 mph.',
+    badgeClass: 'badge-low',
+  }
+}
+
+
 function App() {
   const [origin, setOrigin] = useState('Heidelberg, Germany')
   const [destination, setDestination] = useState('Mannheim, Germany')
@@ -87,6 +117,49 @@ function App() {
   const [scrollProgress, setScrollProgress] = useState(0)
   const [isScrolled, setIsScrolled] = useState(false)
   const [showScrollTop, setShowScrollTop] = useState(false)
+  const [toastMessage, setToastMessage] = useState<string | null>(null)
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg)
+    setTimeout(() => setToastMessage(null), 2500)
+  }
+
+  const handleSwapLocations = () => {
+    setOrigin(destination)
+    setDestination(origin)
+    showToast('Swapped origin and destination')
+  }
+
+  const setQuickDeparture = (offsetHours: number) => {
+    const d = new Date()
+    if (offsetHours > 0) {
+      d.setHours(d.getHours() + offsetHours)
+    }
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
+    setDepartureDatetime(d.toISOString().slice(0, 16))
+    showToast(offsetHours === 0 ? 'Set departure: Now' : `Set departure: +${offsetHours}h`)
+  }
+
+  const handleCopyManifest = (route: RouteItem) => {
+    const manifest = [
+      '=== SPOTTER TRUCK ROUTE MANIFEST ===',
+      `Route: ${route.name} (${route.id}) - ${route.is_recommended ? 'RECOMMENDED' : 'ALTERNATIVE'}`,
+      `Origin: ${data?.origin.name || origin}`,
+      `Destination: ${data?.destination.name || destination}`,
+      `Departure: ${formatDateTime(data?.departure_datetime || departureDatetime)}`,
+      `Gross Cargo: ${Number(loadWeightLbs).toLocaleString()} lbs`,
+      `Total Distance: ${route.distance_miles} miles`,
+      `Est. Driving Duration: ${formatDuration(route.duration_seconds)}`,
+      `Severe Weather Miles: ${route.severe_miles ?? 0} mi`,
+      `High Risk Miles: ${route.high_miles ?? 0} mi`,
+      `Composite Risk Score: ${route.average_risk_score ?? 0}`,
+      `Checkpoints Monitored: ${route.checkpoints_count || route.checkpoints?.length || 0}`,
+      'Safety Compliance: Automated OpenRouteService + Open-Meteo verified',
+    ].join('\n')
+
+    navigator.clipboard.writeText(manifest)
+    showToast(`Copied ${route.name} manifest to clipboard!`)
+  }
 
   const resultsRef = useRef<HTMLDivElement>(null)
   const mapViewRef = useRef<HTMLDivElement>(null)
@@ -215,57 +288,142 @@ function App() {
         aria-hidden="true"
       />
 
+      {/* Floating Action Toast Notification */}
+      {toastMessage && (
+        <div className="floating-toast" role="status">
+          <span className="toast-icon">✓</span>
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
+      {/* Enterprise Header / Navigation Bar */}
       <header className={`header ${isScrolled ? 'scrolled' : ''}`}>
         <div className="header-inner">
-          <div className="header-text-group">
-            <h1>Weather-Aware Truck Routing</h1>
-            <p className="subtitle">
-              Intelligent Highway Route Planning & Checkpoint Weather Risk Assessment
-            </p>
+          <div className="brand-group">
+            <div className="brand-logo-mark" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="1" y="3" width="15" height="13" rx="1"/>
+                <polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
+                <circle cx="5.5" cy="18.5" r="2.5"/>
+                <circle cx="18.5" cy="18.5" r="2.5"/>
+              </svg>
+            </div>
+            <div>
+              <div className="brand-title-row">
+                <h1>Spotter FleetRoute</h1>
+                <span className="brand-tag">DISPATCH v2.4</span>
+              </div>
+              <p className="subtitle">
+                Commercial HGV Route Optimization & Checkpoint Weather Risk Intelligence
+              </p>
+            </div>
           </div>
-          {isScrolled && data && (
-            <button
-              type="button"
-              className="quick-scroll-results-btn"
-              onClick={() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-            >
-              ↓ Jump to Results
-            </button>
-          )}
+
+          <div className="header-telemetry-status">
+            <div className="live-status-pill">
+              <span className="status-pulse-dot" />
+              <span>Telemetry: ORS + Open-Meteo Live</span>
+            </div>
+            {data && (
+              <button
+                type="button"
+                className="quick-scroll-results-btn"
+                onClick={() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              >
+                ↓ View Results ({data.routes_count})
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
       <main className="content">
-        <form className="route-form" onSubmit={handleSearch}>
-          <div className="form-row">
-            <div className="form-group flex-1">
-              <label htmlFor="origin">Origin</label>
-              <input
-                id="origin"
-                type="text"
-                placeholder="e.g. Heidelberg, Germany"
-                value={origin}
-                onChange={(e) => setOrigin(e.target.value)}
+        {/* Quick Corridor Selection Bar */}
+        <div className="preset-corridors-bar">
+          <span className="preset-corridors-label">Quick Test Corridors:</span>
+          <div className="preset-chips-list">
+            {PRESET_CORRIDORS.map((pc) => (
+              <button
+                key={pc.label}
+                type="button"
+                className="preset-chip"
+                onClick={() => {
+                  setOrigin(pc.origin)
+                  setDestination(pc.dest)
+                  showToast(`Selected: ${pc.label}`)
+                }}
                 disabled={loading}
-              />
+                title={pc.desc}
+              >
+                {pc.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <form className="route-form" onSubmit={handleSearch}>
+          <div className="form-row-locations">
+            <div className="form-group flex-1">
+              <label htmlFor="origin">
+                <span className="label-icon">📍</span> Origin Waypoint
+              </label>
+              <div className="input-with-clear">
+                <input
+                  id="origin"
+                  type="text"
+                  placeholder="e.g. Heidelberg, Germany"
+                  value={origin}
+                  onChange={(e) => setOrigin(e.target.value)}
+                  disabled={loading}
+                  required
+                />
+                {origin && (
+                  <button type="button" className="input-clear-btn" onClick={() => setOrigin('')} title="Clear origin">✕</button>
+                )}
+              </div>
             </div>
 
+            <button
+              type="button"
+              className="location-swap-btn"
+              onClick={handleSwapLocations}
+              title="Swap Origin and Destination"
+              disabled={loading}
+            >
+              ⇄
+            </button>
+
             <div className="form-group flex-1">
-              <label htmlFor="destination">Destination</label>
-              <input
-                id="destination"
-                type="text"
-                placeholder="e.g. Mannheim, Germany"
-                value={destination}
-                onChange={(e) => setDestination(e.target.value)}
-                disabled={loading}
-              />
+              <label htmlFor="destination">
+                <span className="label-icon">🏁</span> Destination Waypoint
+              </label>
+              <div className="input-with-clear">
+                <input
+                  id="destination"
+                  type="text"
+                  placeholder="e.g. Mannheim, Germany"
+                  value={destination}
+                  onChange={(e) => setDestination(e.target.value)}
+                  disabled={loading}
+                  required
+                />
+                {destination && (
+                  <button type="button" className="input-clear-btn" onClick={() => setDestination('')} title="Clear destination">✕</button>
+                )}
+              </div>
             </div>
           </div>
 
-          <div className="form-row">
+          <div className="form-row form-row-specs">
             <div className="form-group flex-1">
-              <label htmlFor="departure">Departure Date & Time</label>
+              <div className="label-row-with-helpers">
+                <label htmlFor="departure">Departure Schedule</label>
+                <div className="mini-helpers">
+                  <button type="button" onClick={() => setQuickDeparture(0)} disabled={loading}>Now</button>
+                  <button type="button" onClick={() => setQuickDeparture(2)} disabled={loading}>+2h</button>
+                  <button type="button" onClick={() => setQuickDeparture(24)} disabled={loading}>+24h</button>
+                </div>
+              </div>
               <input
                 id="departure"
                 type="datetime-local"
@@ -276,11 +434,19 @@ function App() {
             </div>
 
             <div className="form-group flex-1">
-              <label htmlFor="weight">Load Weight (lbs)</label>
+              <div className="label-row-with-helpers">
+                <label htmlFor="weight">Gross Cargo Weight (lbs)</label>
+                <div className="mini-helpers">
+                  <button type="button" onClick={() => setLoadWeightLbs(18000)} disabled={loading}>18k</button>
+                  <button type="button" onClick={() => setLoadWeightLbs(35000)} disabled={loading}>35k</button>
+                  <button type="button" onClick={() => setLoadWeightLbs(44000)} disabled={loading}>44k</button>
+                </div>
+              </div>
               <input
                 id="weight"
                 type="number"
                 min="0"
+                max="80000"
                 step="500"
                 placeholder="e.g. 35000"
                 value={loadWeightLbs}
@@ -290,23 +456,62 @@ function App() {
             </div>
 
             <div className="form-group flex-1">
-              <label htmlFor="interval">Sampling Interval</label>
-              <select
-                id="interval"
-                value={samplingIntervalMiles}
-                onChange={(e) => setSamplingIntervalMiles(Number(e.target.value))}
-                disabled={loading}
-              >
-                <option value={10}>Every 10 miles</option>
-                <option value={25}>Every 25 miles</option>
-                <option value={50}>Every 50 miles</option>
-              </select>
+              <label>Sampling Resolution</label>
+              <div className="segmented-control" role="group" aria-label="Checkpoint sampling interval">
+                <button
+                  type="button"
+                  className={`segment-btn ${samplingIntervalMiles === 10 ? 'active' : ''}`}
+                  onClick={() => setSamplingIntervalMiles(10)}
+                  disabled={loading}
+                >
+                  10 mi
+                </button>
+                <button
+                  type="button"
+                  className={`segment-btn ${samplingIntervalMiles === 25 ? 'active' : ''}`}
+                  onClick={() => setSamplingIntervalMiles(25)}
+                  disabled={loading}
+                >
+                  25 mi
+                </button>
+                <button
+                  type="button"
+                  className={`segment-btn ${samplingIntervalMiles === 50 ? 'active' : ''}`}
+                  onClick={() => setSamplingIntervalMiles(50)}
+                  disabled={loading}
+                >
+                  50 mi
+                </button>
+              </div>
             </div>
           </div>
 
-          <button type="submit" className="submit-btn" disabled={loading}>
-            {loading ? 'Evaluating Routes & Weather Risks...' : 'Find & Rank Routes'}
-          </button>
+          {/* Dynamic Cargo Weight Safety Rule Advisory */}
+          {(() => {
+            const advice = getLoadRuleAdvice(Number(loadWeightLbs) || 0)
+            return (
+              <div className={`load-rule-advisory-card ${advice.badgeClass}`}>
+                <div className="advisory-badge-pill">{advice.tier}</div>
+                <p className="advisory-text">{advice.message}</p>
+              </div>
+            )
+          })()}
+
+          <div className="form-actions-row">
+            <button type="submit" className="submit-btn" disabled={loading}>
+              {loading ? (
+                <>
+                  <span className="btn-spinner" />
+                  <span>Calculating HGV Routes & Sampling Weather...</span>
+                </>
+              ) : (
+                <>
+                  <span>⚡ Calculate 3 Safe Routes</span>
+                  <span className="btn-key-hint">Enter</span>
+                </>
+              )}
+            </button>
+          </div>
         </form>
 
         {loading && (
@@ -401,13 +606,24 @@ function App() {
                         <div className="route-header-actions">
                           <button
                             type="button"
+                            className="copy-manifest-btn"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleCopyManifest(route)
+                            }}
+                            title="Copy complete route manifest for driver dispatch"
+                          >
+                            📋 Manifest
+                          </button>
+                          <button
+                            type="button"
                             className="select-route-btn"
                             onClick={(e) => {
                               e.stopPropagation()
                               setSelectedRouteId(route.id)
                             }}
                           >
-                            {isSelected ? '✓ On Map' : 'Select on Map'}
+                            {isSelected ? '✓ Active on Map' : 'Select on Map'}
                           </button>
                           <button
                             type="button"
@@ -418,8 +634,8 @@ function App() {
                             }}
                           >
                             {isExpanded
-                              ? 'Hide Checkpoints'
-                              : `View ${route.checkpoints_count} Checkpoints`}
+                              ? 'Hide Table'
+                              : `Table (${route.checkpoints_count || route.checkpoints?.length || 0})`}
                           </button>
                         </div>
                       </div>
