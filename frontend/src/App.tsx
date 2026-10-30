@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useState, useEffect, useRef, type FormEvent } from 'react'
 import './App.css'
 import { MapView, type RouteItem, type Checkpoint } from './components/MapView'
 
@@ -83,6 +83,54 @@ function App() {
   const [selectedCheckpoint, setSelectedCheckpoint] = useState<Checkpoint | null>(null)
   const [expandedRouteId, setExpandedRouteId] = useState<string | null>(null)
 
+  // Scroll effect states
+  const [scrollProgress, setScrollProgress] = useState(0)
+  const [isScrolled, setIsScrolled] = useState(false)
+  const [showScrollTop, setShowScrollTop] = useState(false)
+
+  const resultsRef = useRef<HTMLDivElement>(null)
+  const mapViewRef = useRef<HTMLDivElement>(null)
+
+  // Track window scroll progress and header elevation
+  useEffect(() => {
+    const handleScroll = () => {
+      const scrollY = window.scrollY
+      const docHeight = document.documentElement.scrollHeight - window.innerHeight
+      const progress = docHeight > 0 ? (scrollY / docHeight) * 100 : 0
+      setScrollProgress(progress)
+      setIsScrolled(scrollY > 25)
+      setShowScrollTop(scrollY > 280)
+    }
+
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    return () => window.removeEventListener('scroll', handleScroll)
+  }, [])
+
+  // IntersectionObserver for smooth scroll-reveal card entrances
+  useEffect(() => {
+    const elements = document.querySelectorAll('.scroll-reveal:not(.revealed)')
+    if (!elements.length) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('revealed')
+            observer.unobserve(entry.target)
+          }
+        })
+      },
+      { threshold: 0.08, rootMargin: '0px 0px -20px 0px' }
+    )
+
+    elements.forEach((el) => observer.observe(el))
+    return () => observer.disconnect()
+  }, [data, expandedRouteId])
+
+  const scrollToTop = () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8001'
 
   const handleSearch = async (e: FormEvent) => {
@@ -139,6 +187,11 @@ function App() {
         const initialSelectedId = result.recommended_route_id || result.routes[0].id
         setSelectedRouteId(initialSelectedId)
         setExpandedRouteId(initialSelectedId)
+
+        // Smooth auto-scroll to results
+        setTimeout(() => {
+          resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }, 150)
       }
     } catch (err: unknown) {
       if (err instanceof Error) {
@@ -155,11 +208,31 @@ function App() {
 
   return (
     <div className="app-container">
-      <header className="header">
-        <h1>Weather-Aware Truck Routing</h1>
-        <p className="subtitle">
-          Intelligent Highway Route Planning & Checkpoint Weather Risk Assessment
-        </p>
+      {/* Top Scroll Progress Bar */}
+      <div
+        className="scroll-progress-bar"
+        style={{ width: `${scrollProgress}%` }}
+        aria-hidden="true"
+      />
+
+      <header className={`header ${isScrolled ? 'scrolled' : ''}`}>
+        <div className="header-inner">
+          <div className="header-text-group">
+            <h1>Weather-Aware Truck Routing</h1>
+            <p className="subtitle">
+              Intelligent Highway Route Planning & Checkpoint Weather Risk Assessment
+            </p>
+          </div>
+          {isScrolled && data && (
+            <button
+              type="button"
+              className="quick-scroll-results-btn"
+              onClick={() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+            >
+              ↓ Jump to Results
+            </button>
+          )}
+        </div>
       </header>
 
       <main className="content">
@@ -253,10 +326,10 @@ function App() {
         )}
 
         {data && (
-          <div className="results-container">
+          <div className="results-container" ref={resultsRef}>
             {/* Top Warning Banner if NO_TRAVEL conditions prevent safe travel */}
             {data.warning && (
-              <div className="warning-banner">
+              <div className="warning-banner scroll-reveal">
                 <span className="warning-icon">⚠️</span>
                 <div>
                   <strong>Weather Travel Warning:</strong>
@@ -267,7 +340,7 @@ function App() {
 
             {/* Top Recommendation Banner if safe route found */}
             {data.has_recommended_route && recommendedRoute && (
-              <div className="recommendation-banner">
+              <div className="recommendation-banner scroll-reveal">
                 <div className="recommendation-badge-pill">★ BEST ROUTE</div>
                 <div className="recommendation-content">
                   <h3>
@@ -285,7 +358,7 @@ function App() {
             )}
 
             {/* Trip Info Header */}
-            <div className="trip-summary">
+            <div className="trip-summary scroll-reveal">
               <h3>Trip Analysis Overview</h3>
               <p>
                 <strong>Origin:</strong> {data.origin.name} <br />
@@ -297,7 +370,7 @@ function App() {
             </div>
 
             {/* 1. Route Comparison Cards */}
-            <div className="route-comparison-section">
+            <div className="route-comparison-section scroll-reveal">
               <h3>Route Options Ranked by Safety ({data.routes_count})</h3>
               <div className="routes-list">
                 {data.routes.map((route) => {
@@ -307,7 +380,7 @@ function App() {
                   return (
                     <div
                       key={route.id}
-                      className={`route-card ${isSelected ? 'selected-card' : ''}`}
+                      className={`route-card ${isSelected ? 'selected-card' : ''} scroll-reveal delay-${Math.min(3, route.rank || 1)}`}
                       onClick={() => setSelectedRouteId(route.id)}
                     >
                       <div className="route-header">
@@ -448,6 +521,7 @@ function App() {
                                         onClick={() => {
                                           setSelectedRouteId(route.id)
                                           setSelectedCheckpoint(cp)
+                                          mapViewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
                                         }}
                                       >
                                         Inspect
@@ -467,19 +541,33 @@ function App() {
             </div>
 
             {/* 2. Interactive Map Section */}
-            <MapView
-              routes={data.routes}
-              selectedRouteId={selectedRouteId}
-              onSelectRoute={(id) => setSelectedRouteId(id)}
-              selectedCheckpoint={selectedCheckpoint}
-              onSelectCheckpoint={(cp) => setSelectedCheckpoint(cp)}
-              originName={data.origin.name}
-              destinationName={data.destination.name}
-              departureDatetime={data.departure_datetime}
-            />
+            <div ref={mapViewRef} className="map-scroll-wrapper scroll-reveal">
+              <MapView
+                routes={data.routes}
+                selectedRouteId={selectedRouteId}
+                onSelectRoute={(id) => setSelectedRouteId(id)}
+                selectedCheckpoint={selectedCheckpoint}
+                onSelectCheckpoint={(cp) => setSelectedCheckpoint(cp)}
+                originName={data.origin.name}
+                destinationName={data.destination.name}
+                departureDatetime={data.departure_datetime}
+              />
+            </div>
           </div>
         )}
       </main>
+
+      {/* Floating Scroll-to-Top Button */}
+      <button
+        type="button"
+        className={`scroll-to-top-btn ${showScrollTop ? 'visible' : ''}`}
+        onClick={scrollToTop}
+        aria-label="Scroll back to top"
+        title="Scroll back to top"
+      >
+        <span className="scroll-top-arrow" aria-hidden="true">↑</span>
+        <span>Top</span>
+      </button>
     </div>
   )
 }

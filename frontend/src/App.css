@@ -850,3 +850,173 @@
   font-size: 0.9rem;
   font-weight: 600;
 }
+
+
+/* ==========================================================================
+   Scroll-Based Effects & Animations (Zero Blue, High Performance)
+   ========================================================================== */
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* 1. Top Reading / Scroll Progress Bar */
+.scroll-progress-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 3px;
+  background: var(--accent-primary);
+  z-index: 9999;
+  transition: width 0.1s cubic-bezier(0, 0, 0.2, 1);
+  box-shadow: 0 0 10px rgba(232, 117, 50, 0.45);
+}
+
+/* 2. Sticky Elevated Header on Scroll */
+.header {
+  transition: background-color 0.25s ease, padding 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+}
+
+.header.scrolled {
+  position: sticky;
+  top: 0;
+  z-index: 200;
+  background: rgba(247, 247, 245, 0.94);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  margin: -2.5rem -1.5rem 1.5rem -1.5rem;
+  padding: 0.85rem 1.5rem;
+  border-bottom: 1px solid var(--border-color);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+}
+
+.header-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.header.scrolled h1 {
+  font-size: 1.35rem;
+  margin: 0;
+}
+
+.header.scrolled .subtitle {
+  display: none;
+}
+
+.quick-scroll-results-btn {
+  background: var(--accent-primary);
+  color: #FFFFFF;
+  border: none;
+  border-radius: 20px;
+  padding: 0.45rem 1rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(232, 117, 50, 0.25);
+  transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.quick-scroll-results-btn:hover {
+  background: #d66422;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(232, 117, 50, 0.35);
+}
+
+/* 3. Scroll-Reveal Element Animations */
+.scroll-reveal {
+  opacity: 0;
+  transform: translateY(22px);
+  transition: opacity 0.45s cubic-bezier(0.16, 1, 0.3, 1), transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+}
+
+.scroll-reveal.revealed {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.scroll-reveal.delay-1 {
+  transition-delay: 0.08s;
+}
+
+.scroll-reveal.delay-2 {
+  transition-delay: 0.16s;
+}
+
+.scroll-reveal.delay-3 {
+  transition-delay: 0.24s;
+}
+
+/* 4. Map & Results Container Scroll Margin */
+.map-scroll-wrapper {
+  scroll-margin-top: 5rem;
+}
+
+.results-container {
+  scroll-margin-top: 4.5rem;
+}
+
+/* 5. Floating Back-to-Top Button */
+.scroll-to-top-btn {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  background: #222222;
+  color: #FFFFFF;
+  border: 1px solid #444444;
+  border-radius: 28px;
+  padding: 0.6rem 1.15rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  z-index: 500;
+  opacity: 0;
+  transform: translateY(16px);
+  pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.25s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.scroll-to-top-btn.visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.scroll-to-top-btn:hover {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(232, 117, 50, 0.3);
+}
+
+.scroll-top-arrow {
+  font-size: 1rem;
+  line-height: 1;
+  transition: transform 0.2s ease;
+}
+
+.scroll-to-top-btn:hover .scroll-top-arrow {
+  transform: translateY(-2px);
+}
+
+/* 6. Motion-Sensitive Accessibility */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .scroll-reveal {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+  .scroll-progress-bar {
+    display: none;
+  }
+}
