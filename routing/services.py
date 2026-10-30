@@ -32,6 +32,28 @@ def geocode_location(query: str) -> dict:
         raise ValueError("Geocoding service unavailable or timed out.")
 
     if resp.status_code == 401 or resp.status_code == 403:
+        # Check if quota exceeded or unauthorized; fallback to Nominatim if quota exceeded
+        if resp.status_code == 403 and 'quota' in resp.text.lower():
+            try:
+                nom_headers = {
+                    'User-Agent': 'SpotterFleetRoute/2.5 (Commercial HGV Logistics Engine; https://truck-weather-frontend-waqe.vercel.app)'
+                }
+                nom_resp = requests.get(
+                    'https://nominatim.openstreetmap.org/search',
+                    params={'q': query.strip(), 'format': 'json', 'limit': 1},
+                    headers=nom_headers,
+                    timeout=6
+                )
+                if nom_resp.status_code == 200:
+                    nom_data = nom_resp.json()
+                    if nom_data and len(nom_data) > 0:
+                        first = nom_data[0]
+                        return {
+                            'name': first.get('display_name') or query,
+                            'coordinates': [float(first['lon']), float(first['lat'])]
+                        }
+            except Exception as e:
+                logger.warning(f"Nominatim fallback geocoding failed: {e}")
         raise ValueError("Invalid or unauthorized OpenRouteService API key.")
     elif resp.status_code != 200:
         raise ValueError(f"Geocoding failed with status {resp.status_code}.")
