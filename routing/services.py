@@ -232,6 +232,85 @@ def parse_route_roads(
     }
 
 
+def generate_route_corridor_name(route_index: int, roads: list[dict], major_roads: list[dict]) -> tuple[str, str]:
+    """
+    Generates a natural, human-readable route name based on the actual primary highways
+    and corridors used, e.g. ("Route 1: via B 37", "via B 37").
+    """
+    major_refs = []
+    seen = set()
+    for r in (major_roads or []):
+        for ref in r.get('highway_refs', []):
+            if ref not in seen:
+                seen.add(ref)
+                major_refs.append(ref)
+
+    if major_refs:
+        if len(major_refs) == 1:
+            via = f"via {major_refs[0]}"
+        elif len(major_refs) == 2:
+            via = f"via {major_refs[0]} & {major_refs[1]}"
+        elif len(major_refs) == 3:
+            via = f"via {major_refs[0]}, {major_refs[1]} & {major_refs[2]}"
+        else:
+            sorted_by_dist = sorted(
+                [r for r in major_roads if r.get('highway_refs')],
+                key=lambda x: x.get('distance_meters', 0),
+                reverse=True
+            )
+            top_refs = []
+            for r in sorted_by_dist:
+                for ref in r.get('highway_refs', []):
+                    if ref not in top_refs:
+                        top_refs.append(ref)
+                    if len(top_refs) == 3:
+                        break
+                if len(top_refs) == 3:
+                    break
+            if len(top_refs) == 3:
+                via = f"via {top_refs[0]}, {top_refs[1]} & {top_refs[2]}"
+            elif len(top_refs) == 2:
+                via = f"via {top_refs[0]} & {top_refs[1]}"
+            else:
+                via = f"via {top_refs[0]}" if top_refs else f"via {major_refs[0]}"
+        return f"Route {route_index}: {via}", via
+
+    named_roads = [
+        r for r in (roads or [])
+        if r.get('name') and r['name'] not in ('Road name unavailable', '-', '')
+    ]
+    if named_roads:
+        longest = max(named_roads, key=lambda x: x.get('distance_meters', 0))
+        via = f"via {longest['name']}"
+        return f"Route {route_index}: {via}", via
+
+    return f"Route {route_index}", f"Route {route_index}"
+
+
+def ensure_unique_corridor_names(routes: list[dict]) -> list[dict]:
+    """
+    Ensures every route alternative has a unique, descriptive corridor name.
+    If multiple routes share the same primary corridor name, distinguishes them
+    with clean alternative letters, e.g. 'Route 2: via B 535 & B 36 (Alt A)'.
+    """
+    from collections import Counter
+    corridor_counts = Counter(r.get('corridor_name') for r in routes if r.get('corridor_name'))
+
+    seen = {}
+    for idx, r in enumerate(routes):
+        c_name = r.get('corridor_name')
+        if not c_name:
+            continue
+        if corridor_counts[c_name] > 1:
+            seen[c_name] = seen.get(c_name, 0) + 1
+            alt_num = seen[c_name]
+            alt_suffix = f"(Alt {chr(64 + alt_num)})"
+            new_corridor = f"{c_name} {alt_suffix}"
+            r['corridor_name'] = new_corridor
+            r['name'] = f"Route {idx + 1}: {new_corridor}"
+    return routes
+
+
 def _parse_feature(feature, route_index, origin_coords, dest_coords, route_name_prefix="Route"):
     props = feature.get('properties', {})
     summary = props.get('summary', {})
@@ -259,9 +338,16 @@ def _parse_feature(feature, route_index, origin_coords, dest_coords, route_name_
         total_distance_meters=meters,
     )
 
+    full_name, corridor_label = generate_route_corridor_name(
+        route_index,
+        roads_info['roads'],
+        roads_info['major_roads']
+    )
+
     return {
         'id': f"route-{route_index}",
-        'name': f"{route_name_prefix} {route_index}",
+        'name': full_name,
+        'corridor_name': corridor_label,
         'distance_miles': round(meters * METERS_TO_MILES, 2),
         'duration_seconds': round(duration_sec, 1),
         'geometry': geometry,
@@ -327,10 +413,11 @@ def get_routes(origin_coords: list, dest_coords: list) -> list:
                         unique_features.append(f)
 
                 if unique_features:
-                    return [
+                    parsed_routes = [
                         _parse_feature(f, idx + 1, origin_coords, dest_coords)
                         for idx, f in enumerate(unique_features[:3])
                     ]
+                    return ensure_unique_corridor_names(parsed_routes)
     except requests.RequestException as e:
         logger.warning(f"Alternative routes request failed: {e}")
 
@@ -369,5 +456,5 @@ def get_routes(origin_coords: list, dest_coords: list) -> list:
     if not routes:
         raise ValueError("No viable truck routes could be calculated for these locations.")
 
-    return routes
+    return ensure_unique_corridor_names(routes)
 
