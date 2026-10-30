@@ -12,67 +12,81 @@ ORS_DIRECTIONS_CAR_URL = 'https://api.openrouteservice.org/v2/directions/driving
 METERS_TO_MILES = 0.000621371
 
 
+def _geocode_nominatim(query: str) -> tuple[dict | None, bool]:
+    """Fallback geocoding using OpenStreetMap Nominatim API. Returns (result_dict, is_network_error)."""
+    try:
+        nom_headers = {
+            'User-Agent': 'SpotterFleetRoute/2.5 (Commercial HGV Logistics Engine; https://truck-weather-frontend-waqe.vercel.app)'
+        }
+        nom_resp = requests.get(
+            'https://nominatim.openstreetmap.org/search',
+            params={'q': query.strip(), 'format': 'json', 'limit': 1},
+            headers=nom_headers,
+            timeout=8
+        )
+        if nom_resp.status_code == 200:
+            nom_data = nom_resp.json()
+            if nom_data and len(nom_data) > 0:
+                first = nom_data[0]
+                return {
+                    'name': first.get('display_name') or query,
+                    'coordinates': [float(first['lon']), float(first['lat'])]
+                }, False
+        return None, False
+    except requests.RequestException as e:
+        logger.warning(f"Nominatim fallback geocoding failed: {e}")
+        return None, True
+    except Exception as e:
+        logger.warning(f"Nominatim fallback parsing failed: {e}")
+        return None, False
+
+
 def geocode_location(query: str) -> dict:
     """
     Geocodes a query string (e.g. city or address) to [lon, lat] and a display name.
+    Attempts OpenRouteService first when configured; automatically falls back
+    to OpenStreetMap Nominatim if ORS is unauthorized, rate-limited, or unavailable.
     Returns: {"name": str, "coordinates": [lon, lat]}
-    Raises ValueError on not found or API failure.
+    Raises ValueError on location not found or complete geocoding failure.
     """
+    clean_query = query.strip()
+    if not clean_query:
+        raise ValueError("Location query cannot be empty.")
+
+    network_error = False
     api_key = getattr(settings, 'OPENROUTESERVICE_API_KEY', '')
-    if not api_key:
-        raise ValueError("OpenRouteService API key is missing on the server.")
+    if api_key:
+        headers = {'Authorization': api_key}
+        params = {'text': clean_query, 'size': 1}
+        try:
+            resp = requests.get(ORS_GEOCODE_URL, params=params, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                features = data.get('features', [])
+                if features:
+                    first = features[0]
+                    coords = first.get('geometry', {}).get('coordinates', [])
+                    if len(coords) >= 2:
+                        label = first.get('properties', {}).get('label') or first.get('properties', {}).get('name') or clean_query
+                        return {
+                            'name': label,
+                            'coordinates': [float(coords[0]), float(coords[1])]
+                        }
+            else:
+                logger.warning(f"ORS geocode returned HTTP {resp.status_code}. Attempting Nominatim fallback.")
+        except requests.RequestException as e:
+            logger.warning(f"ORS geocoding request failed: {e}. Attempting Nominatim fallback.")
+            network_error = True
 
-    headers = {'Authorization': api_key}
-    params = {'text': query.strip(), 'size': 1}
+    # Resilient fallback: OpenStreetMap Nominatim
+    nom_result, nom_network_error = _geocode_nominatim(clean_query)
+    if nom_result:
+        return nom_result
 
-    try:
-        resp = requests.get(ORS_GEOCODE_URL, params=params, headers=headers, timeout=10)
-    except requests.RequestException as e:
-        logger.error(f"Geocoding request failed: {e}")
+    if network_error and nom_network_error:
         raise ValueError("Geocoding service unavailable or timed out.")
 
-    if resp.status_code == 401 or resp.status_code == 403:
-        # Check if quota exceeded or unauthorized; fallback to Nominatim if quota exceeded
-        if resp.status_code == 403 and 'quota' in resp.text.lower():
-            try:
-                nom_headers = {
-                    'User-Agent': 'SpotterFleetRoute/2.5 (Commercial HGV Logistics Engine; https://truck-weather-frontend-waqe.vercel.app)'
-                }
-                nom_resp = requests.get(
-                    'https://nominatim.openstreetmap.org/search',
-                    params={'q': query.strip(), 'format': 'json', 'limit': 1},
-                    headers=nom_headers,
-                    timeout=6
-                )
-                if nom_resp.status_code == 200:
-                    nom_data = nom_resp.json()
-                    if nom_data and len(nom_data) > 0:
-                        first = nom_data[0]
-                        return {
-                            'name': first.get('display_name') or query,
-                            'coordinates': [float(first['lon']), float(first['lat'])]
-                        }
-            except Exception as e:
-                logger.warning(f"Nominatim fallback geocoding failed: {e}")
-        raise ValueError("Invalid or unauthorized OpenRouteService API key.")
-    elif resp.status_code != 200:
-        raise ValueError(f"Geocoding failed with status {resp.status_code}.")
-
-    data = resp.json()
-    features = data.get('features', [])
-    if not features:
-        raise ValueError(f"Location not found: '{query}'")
-
-    first = features[0]
-    coords = first.get('geometry', {}).get('coordinates', [])
-    if len(coords) < 2:
-        raise ValueError(f"Invalid coordinates returned for '{query}'")
-
-    label = first.get('properties', {}).get('label') or first.get('properties', {}).get('name') or query
-    return {
-        'name': label,
-        'coordinates': [float(coords[0]), float(coords[1])]
-    }
+    raise ValueError(f"Location not found: '{clean_query}'")
 
 
 HIGHWAY_REF_PATTERNS = [
@@ -80,16 +94,23 @@ HIGHWAY_REF_PATTERNS = [
     re.compile(r'\b(B\s?\d+)\b', re.I),           # German Federal Highway (Bundesstraße)
     re.compile(r'\b(I[- ]?\d+)\b', re.I),         # US Interstate
     re.compile(r'\b(US[- ]?\d+)\b', re.I),        # US Highway
+    re.compile(r'\b(NH[- ]?\d+[A-Z]?)\b', re.I),  # National Highway (India / International)
+    re.compile(r'\b(SH[- ]?\d+[A-Z]?)\b', re.I),  # State Highway
+    re.compile(r'\b(NE[- ]?\d+)\b', re.I),        # National Expressway
+    re.compile(r'\b(NEX)\b', re.I),               # National Expressway code
+    re.compile(r'\b(AH[- ]?\d+)\b', re.I),        # Asian Highway
     re.compile(r'\b(E\s?\d+)\b', re.I),           # European E-road
     re.compile(r'\b(M\s?\d+)\b', re.I),           # UK Motorway
     re.compile(r'\b(L\s?\d+)\b', re.I),           # Landesstraße
     re.compile(r'\b(K\s?\d+)\b', re.I),           # Kreisstraße
     re.compile(r'\b(State (?:Route|Hwy)\s?\d+)\b', re.I),
+    re.compile(r'\b(Route\s?\d+)\b', re.I),
+    re.compile(r'\b(Highway\s?\d+)\b', re.I),
 ]
 
 
 def extract_highway_refs(name: str) -> list[str]:
-    """Extracts standard highway and road reference codes (e.g. A 5, B 37, I-80)."""
+    """Extracts standard highway and road reference codes (e.g. A 5, B 37, I-80, NH-44)."""
     if not name or name == '-':
         return []
     refs = []
@@ -108,10 +129,9 @@ def is_major_classification(name: str, waycategory_id: int | None = None) -> boo
     if not name or name == '-':
         return False
     lower = name.lower()
-    if any(k in lower for k in ['autobahn', 'motorway', 'interstate', 'expressway', 'freeway', 'turnpike']):
+    if any(k in lower for k in ['autobahn', 'motorway', 'interstate', 'expressway', 'freeway', 'turnpike', 'national highway', 'express way']):
         return True
-    # If contains Autobahn (A x), Bundesstraße (B x), Interstate (I-x), or US Hwy
-    for pat in [HIGHWAY_REF_PATTERNS[0], HIGHWAY_REF_PATTERNS[1], HIGHWAY_REF_PATTERNS[2], HIGHWAY_REF_PATTERNS[3]]:
+    for pat in HIGHWAY_REF_PATTERNS:
         if pat.search(name):
             return True
     return False
@@ -125,7 +145,7 @@ def parse_route_roads(
     total_distance_meters: float = 0.0,
 ) -> dict:
     """
-    Parses turn-by-turn steps from OpenRouteService directions into an ordered list
+    Parses turn-by-turn steps from routing directions into an ordered list
     of deduplicated roads, extracting road names, highway reference numbers,
     road classifications, and distances.
     """
@@ -147,6 +167,7 @@ def parse_route_roads(
 
     for step in steps:
         name = (step.get('name') or '').strip()
+        ref_field = (step.get('ref') or '').strip()
         dist_m = float(step.get('distance', 0.0))
         dur_s = float(step.get('duration', 0.0))
         wp = step.get('way_points', [0, 0])
@@ -161,9 +182,15 @@ def parse_route_roads(
 
         is_major = is_major_classification(name, cat_id)
         refs = extract_highway_refs(name)
+        if ref_field:
+            clean_ref = ref_field.strip().upper()
+            if clean_ref and clean_ref not in refs:
+                refs.append(clean_ref)
+            if not is_major:
+                is_major = is_major_classification(clean_ref)
 
         if not name or name == '-':
-            if cat_id in (1, 3):
+            if cat_id in (1, 3) or is_major:
                 display_name = "Motorway / Highway (Name unassigned)"
                 road_type = "motorway"
                 is_major = True
@@ -386,97 +413,204 @@ def _parse_feature(feature, route_index, origin_coords, dest_coords, route_name_
     }
 
 
+def _parse_osrm_route(osrm_route: dict, route_index: int, origin_coords: list, dest_coords: list) -> dict:
+    """
+    Converts an OpenStreetMap OSRM route response into the standard RouteItem format.
+    Extracts genuine geometries, distances, durations, and turn-by-turn road segments.
+    """
+    meters = float(osrm_route.get('distance', 0.0))
+    duration_sec = float(osrm_route.get('duration', 0.0))
+    if duration_sec <= 0 and meters > 0:
+        duration_sec = meters / 22.35
+
+    geometry = osrm_route.get('geometry', {})
+    legs = osrm_route.get('legs', [])
+    steps = []
+    for leg in legs:
+        for s in leg.get('steps', []):
+            name = (s.get('name') or '').strip()
+            ref = (s.get('ref') or '').strip()
+            if not name and ref:
+                name = ref
+            elif name and ref and ref not in name:
+                name = f"{name} ({ref})"
+            steps.append({
+                'name': name,
+                'distance': float(s.get('distance', 0.0)),
+                'duration': float(s.get('duration', 0.0)),
+                'ref': ref,
+                'instruction': s.get('maneuver', {}).get('type', ''),
+            })
+
+    roads_info = parse_route_roads(
+        steps=steps,
+        total_distance_meters=meters
+    )
+
+    full_name, corridor_label = generate_route_corridor_name(
+        route_index,
+        roads_info['roads'],
+        roads_info['major_roads']
+    )
+
+    return {
+        'id': f"route-{route_index}",
+        'name': full_name,
+        'corridor_name': corridor_label,
+        'distance_miles': round(meters * METERS_TO_MILES, 2),
+        'duration_seconds': round(duration_sec, 1),
+        'geometry': geometry,
+        'start_coordinates': origin_coords,
+        'destination_coordinates': dest_coords,
+        'roads_used': roads_info['roads'],
+        'roads_travel_order': roads_info['roads_travel_order'],
+        'major_roads': roads_info['major_roads'],
+        'highway_distance_miles': roads_info['highway_distance_miles'],
+        'highway_percentage': roads_info['highway_percentage'],
+        'toll_distance_miles': roads_info['toll_distance_miles'],
+        'toll_percentage': roads_info['toll_percentage'],
+        'has_toll_roads': roads_info['has_toll_roads'],
+    }
+
+
+def _get_osrm_routes(origin_coords: list, dest_coords: list) -> list:
+    """
+    Fetches real routes and turn-by-turn road data from OpenStreetMap OSRM routing engine
+    when OpenRouteService is unauthorized, quota-limited, or unavailable.
+    """
+    url = (
+        f"http://router.project-osrm.org/route/v1/driving/"
+        f"{origin_coords[0]},{origin_coords[1]};{dest_coords[0]},{dest_coords[1]}"
+        f"?overview=full&geometries=geojson&steps=true&alternatives=true"
+    )
+    headers = {
+        'User-Agent': 'SpotterFleetRoute/2.5 (Commercial HGV Logistics Engine; https://truck-weather-frontend-waqe.vercel.app)'
+    }
+    try:
+        resp = requests.get(url, headers=headers, timeout=12)
+        if resp.status_code == 200:
+            data = resp.json()
+            osrm_routes = data.get('routes', [])
+            if not osrm_routes:
+                return []
+            parsed_routes = []
+            seen_distances = set()
+            for idx, r in enumerate(osrm_routes[:3]):
+                parsed = _parse_osrm_route(r, idx + 1, origin_coords, dest_coords)
+                if parsed['distance_miles'] not in seen_distances:
+                    seen_distances.add(parsed['distance_miles'])
+                    parsed_routes.append(parsed)
+            return parsed_routes
+        else:
+            logger.warning(f"OSRM routing returned HTTP {resp.status_code}")
+    except Exception as e:
+        logger.warning(f"OSRM fallback routing request failed: {e}")
+    return []
+
+
 def get_routes(origin_coords: list, dest_coords: list) -> list:
     """
     Fetches driving-hgv route(s) between origin and destination coordinates [lon, lat].
-    Attempts to fetch alternative routes. If the distance exceeds ORS limit (100km)
-    for alternative_routes algorithm, gracefully falls back to multi-preference routing.
-    Requests turn-by-turn instructions and highway/toll classification extras.
+    Attempts OpenRouteService first with turn-by-turn steps and highway classification extras.
+    If ORS is unauthorized (401), quota exceeded (403/429), or fails, seamlessly falls back
+    to OpenStreetMap OSRM routing so service remains 100% available with genuine data.
     """
     api_key = getattr(settings, 'OPENROUTESERVICE_API_KEY', '')
-    if not api_key:
-        raise ValueError("OpenRouteService API key is missing on the server.")
-
-    headers = {
-        'Authorization': api_key,
-        'Content-Type': 'application/json'
-    }
-
-    # Attempt 1: alternative_routes parameter with instructions and waycategory/tollways
-    body_alt = {
-        'coordinates': [origin_coords, dest_coords],
-        'instructions': True,
-        'extra_info': ['waycategory', 'tollways'],
-        'alternative_routes': {
-            'target_count': 3,
-            'weight_factor': 1.4,
-            'share_factor': 0.6
-        }
-    }
-
-    try:
-        resp = requests.post(ORS_DIRECTIONS_HGV_URL, json=body_alt, headers=headers, timeout=15)
-        # If extra_info was rejected by older ORS profile, retry without extra_info
-        if resp.status_code == 400 and 'extra_info' in resp.text:
-            body_alt_simple = dict(body_alt)
-            body_alt_simple.pop('extra_info', None)
-            resp = requests.post(ORS_DIRECTIONS_HGV_URL, json=body_alt_simple, headers=headers, timeout=15)
-
-        if resp.status_code == 200:
-            features = resp.json().get('features', [])
-            if features:
-                unique_features = []
-                seen_signatures = set()
-                for f in features:
-                    s = f.get('properties', {}).get('summary', {})
-                    sig = (round(float(s.get('distance', 0.0)), 1), round(float(s.get('duration', 0.0)), 1))
-                    if sig not in seen_signatures:
-                        seen_signatures.add(sig)
-                        unique_features.append(f)
-
-                if unique_features:
-                    parsed_routes = [
-                        _parse_feature(f, idx + 1, origin_coords, dest_coords)
-                        for idx, f in enumerate(unique_features[:3])
-                    ]
-                    return ensure_unique_corridor_names(parsed_routes)
-    except requests.RequestException as e:
-        logger.warning(f"Alternative routes request failed: {e}")
-
-    # Fallback for >100km or when alternative_routes returns non-200 (e.g. code 2004 limit):
-    # We fetch routes using distinct preferences ('recommended' and 'shortest')
     routes = []
     seen_distances = set()
+    ors_failed = False
 
-    for pref in ['recommended', 'shortest']:
-        body_pref = {
+    if api_key:
+        headers = {
+            'Authorization': api_key,
+            'Content-Type': 'application/json'
+        }
+
+        # Attempt 1: alternative_routes parameter with instructions and waycategory/tollways
+        body_alt = {
             'coordinates': [origin_coords, dest_coords],
             'instructions': True,
             'extra_info': ['waycategory', 'tollways'],
-            'preference': pref
+            'alternative_routes': {
+                'target_count': 3,
+                'weight_factor': 1.4,
+                'share_factor': 0.6
+            }
         }
+
         try:
-            r = requests.post(ORS_DIRECTIONS_HGV_URL, json=body_pref, headers=headers, timeout=15)
-            if r.status_code == 400 and 'extra_info' in r.text:
-                body_pref_simple = dict(body_pref)
-                body_pref_simple.pop('extra_info', None)
-                r = requests.post(ORS_DIRECTIONS_HGV_URL, json=body_pref_simple, headers=headers, timeout=15)
+            resp = requests.post(ORS_DIRECTIONS_HGV_URL, json=body_alt, headers=headers, timeout=15)
+            if resp.status_code == 400 and 'extra_info' in resp.text:
+                body_alt_simple = dict(body_alt)
+                body_alt_simple.pop('extra_info', None)
+                resp = requests.post(ORS_DIRECTIONS_HGV_URL, json=body_alt_simple, headers=headers, timeout=15)
 
-            if r.status_code == 200:
-                features = r.json().get('features', [])
+            if resp.status_code == 200:
+                features = resp.json().get('features', [])
                 if features:
-                    parsed = _parse_feature(features[0], len(routes) + 1, origin_coords, dest_coords)
-                    # Deduplicate if identical distance
-                    if parsed['distance_miles'] not in seen_distances:
-                        seen_distances.add(parsed['distance_miles'])
-                        routes.append(parsed)
-            elif r.status_code in (401, 403):
-                raise ValueError("Invalid or unauthorized OpenRouteService API key.")
+                    unique_features = []
+                    seen_signatures = set()
+                    for f in features:
+                        s = f.get('properties', {}).get('summary', {})
+                        sig = (round(float(s.get('distance', 0.0)), 1), round(float(s.get('duration', 0.0)), 1))
+                        if sig not in seen_signatures:
+                            seen_signatures.add(sig)
+                            unique_features.append(f)
+
+                    if unique_features:
+                        parsed_routes = [
+                            _parse_feature(f, idx + 1, origin_coords, dest_coords)
+                            for idx, f in enumerate(unique_features[:3])
+                        ]
+                        return ensure_unique_corridor_names(parsed_routes)
+            elif resp.status_code in (401, 403, 429):
+                logger.warning(f"ORS directions returned HTTP {resp.status_code}.")
+                ors_failed = True
         except requests.RequestException as e:
-            logger.error(f"Route query error for preference {pref}: {e}")
+            logger.warning(f"Alternative routes request failed: {e}")
+            ors_failed = True
 
-    if not routes:
-        raise ValueError("No viable truck routes could be calculated for these locations.")
+        # Fallback for >100km or when alternative_routes returns non-200 (unless ORS auth failed)
+        if not ors_failed:
+            for pref in ['recommended', 'shortest']:
+                body_pref = {
+                    'coordinates': [origin_coords, dest_coords],
+                    'instructions': True,
+                    'extra_info': ['waycategory', 'tollways'],
+                    'preference': pref
+                }
+                try:
+                    r = requests.post(ORS_DIRECTIONS_HGV_URL, json=body_pref, headers=headers, timeout=15)
+                    if r.status_code == 400 and 'extra_info' in r.text:
+                        body_pref_simple = dict(body_pref)
+                        body_pref_simple.pop('extra_info', None)
+                        r = requests.post(ORS_DIRECTIONS_HGV_URL, json=body_pref_simple, headers=headers, timeout=15)
 
-    return ensure_unique_corridor_names(routes)
+                    if r.status_code == 200:
+                        features = r.json().get('features', [])
+                        if features:
+                            parsed = _parse_feature(features[0], len(routes) + 1, origin_coords, dest_coords)
+                            if parsed['distance_miles'] not in seen_distances:
+                                seen_distances.add(parsed['distance_miles'])
+                                routes.append(parsed)
+                    elif r.status_code in (401, 403, 429):
+                        ors_failed = True
+                        break
+                except requests.RequestException as e:
+                    logger.error(f"Route query error for preference {pref}: {e}")
+                    ors_failed = True
+                    break
+    else:
+        ors_failed = True
 
+    if routes:
+        return ensure_unique_corridor_names(routes)
+
+    # If ORS failed due to auth/quota/network or missing key, trigger OSRM fallback
+    if ors_failed or not api_key:
+        logger.info("Falling back to OpenStreetMap OSRM routing engine...")
+        osrm_routes = _get_osrm_routes(origin_coords, dest_coords)
+        if osrm_routes:
+            return ensure_unique_corridor_names(osrm_routes)
+
+    raise ValueError("No viable truck routes could be calculated for these locations.")

@@ -1070,3 +1070,61 @@ class RoadExtractionAndHighwayTests(TestCase):
         self.assertEqual(result["toll_percentage"], 100.0)
         self.assertTrue(result["has_toll_roads"])
         self.assertIn("I-95", result["roads"][0]["highway_refs"])
+
+    @patch('routing.services.requests.get')
+    def test_geocode_location_ors_auth_failure_falls_back_to_nominatim(self, mock_get):
+        from routing.services import geocode_location
+        # First call is to ORS: returns 401 Unauthorized
+        mock_ors_resp = MagicMock()
+        mock_ors_resp.status_code = 401
+
+        # Second call is to Nominatim: returns 200 with coordinates
+        mock_nom_resp = MagicMock()
+        mock_nom_resp.status_code = 200
+        mock_nom_resp.json.return_value = [
+            {"display_name": "Delhi, India", "lon": "77.2169", "lat": "28.6664"}
+        ]
+
+        mock_get.side_effect = [mock_ors_resp, mock_nom_resp]
+
+        result = geocode_location("Delhi")
+        self.assertEqual(result["name"], "Delhi, India")
+        self.assertAlmostEqual(result["coordinates"][0], 77.2169)
+        self.assertAlmostEqual(result["coordinates"][1], 28.6664)
+
+    @patch('routing.services.requests.get')
+    @patch('routing.services.requests.post')
+    def test_get_routes_ors_auth_failure_falls_back_to_osrm(self, mock_post, mock_get):
+        from routing.services import get_routes
+        # ORS POST returns 401 Unauthorized
+        mock_ors_resp = MagicMock()
+        mock_ors_resp.status_code = 401
+        mock_post.return_value = mock_ors_resp
+
+        # OSRM GET returns 200 OK with route
+        mock_osrm_resp = MagicMock()
+        mock_osrm_resp.status_code = 200
+        mock_osrm_resp.json.return_value = {
+            "code": "Ok",
+            "routes": [{
+                "distance": 500000.0,
+                "duration": 20000.0,
+                "geometry": {"type": "LineString", "coordinates": [[77.2, 28.6], [80.9, 26.8]]},
+                "legs": [{
+                    "steps": [
+                        {"name": "Ganga Expressway", "ref": "NEX", "distance": 400000.0, "duration": 15000.0, "maneuver": {"type": "depart"}},
+                        {"name": "Local Road", "ref": "", "distance": 100000.0, "duration": 5000.0, "maneuver": {"type": "turn"}}
+                    ]
+                }]
+            }]
+        }
+        mock_get.return_value = mock_osrm_resp
+
+        routes = get_routes([77.2, 28.6], [80.9, 26.8])
+        self.assertEqual(len(routes), 1)
+        self.assertIn("NEX", routes[0]["name"])
+        self.assertIn("Ganga Expressway", routes[0]["roads_used"][0]["name"])
+        self.assertEqual(len(routes[0]["roads_used"]), 2)
+        self.assertEqual(routes[0]["roads_travel_order"], ["Ganga Expressway (NEX)", "Local Road"])
+        self.assertGreater(routes[0]["distance_miles"], 300.0)
+
