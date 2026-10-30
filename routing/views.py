@@ -22,22 +22,13 @@ class HealthCheckView(APIView):
     Health and readiness diagnostic check for production hosting and uptime monitors.
     """
     def get(self, request):
-        import requests as req
         has_ors_key = bool(
             getattr(settings, 'OPENROUTESERVICE_API_KEY', None) or os.getenv('OPENROUTESERVICE_API_KEY')
         )
-        meteo_diag = {}
-        try:
-            r = req.get('https://api.open-meteo.com/v1/forecast?latitude=49.4&longitude=8.6&hourly=wind_speed_10m', headers={'User-Agent': 'SpotterFleetRoute/2.5'}, timeout=5)
-            meteo_diag = {"status": r.status_code, "resp_sample": r.text[:80]}
-        except Exception as e:
-            meteo_diag = {"error": str(e)}
-
         return Response({
             "status": "ok",
             "service": "weather-aware-truck-routing",
             "ors_configured": has_ors_key,
-            "meteo_diag": meteo_diag,
             "timestamp": datetime.now(timezone.utc).isoformat()
         }, status=status.HTTP_200_OK)
 
