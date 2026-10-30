@@ -31,6 +31,17 @@ export interface Checkpoint {
   hourly_forecasts?: HourlyForecastEntry[]
 }
 
+export interface RoadSegment {
+  name: string
+  distance_miles: number
+  distance_meters: number
+  duration_seconds: number
+  highway_refs: string[]
+  is_major_road: boolean
+  road_type: 'motorway' | 'highway' | 'local' | 'unnamed'
+  instruction?: string
+}
+
 export interface RouteItem {
   id: string
   name: string
@@ -60,6 +71,14 @@ export interface RouteItem {
   recommendation_status?: string
   recommendation_label?: string
   rank?: number
+  roads_used?: RoadSegment[]
+  roads_travel_order?: string[]
+  major_roads?: RoadSegment[]
+  highway_distance_miles?: number
+  highway_percentage?: number
+  toll_distance_miles?: number
+  toll_percentage?: number
+  has_toll_roads?: boolean
 }
 
 export interface LocationInfo {
@@ -104,3 +123,4 @@ export interface RouteAnalysisResponse {
   routes: RouteItem[]
   error?: string
 }
+

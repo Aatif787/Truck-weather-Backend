@@ -145,6 +145,12 @@ function App() {
       `High Risk Miles: ${route.high_miles ?? 0} mi`,
       `Est. Fuel Gallons: ${(route.distance_miles / fuelMpg).toFixed(1)} gal (@ ${fuelMpg} MPG)`,
       `Est. Fuel Cost: $${((route.distance_miles / fuelMpg) * fuelPrice).toFixed(2)} (@ $${fuelPrice}/gal)`,
+      ...(route.roads_travel_order && route.roads_travel_order.length > 0
+        ? [`Roads Traversed: ${route.roads_travel_order.join(' → ')}`]
+        : []),
+      ...(route.highway_distance_miles !== undefined && route.highway_distance_miles > 0
+        ? [`Highway Coverage: ${route.highway_distance_miles} mi (${route.highway_percentage}%) | Toll: ${route.has_toll_roads ? `${route.toll_distance_miles} mi` : 'Toll-Free'}`]
+        : []),
       `Checkpoints Monitored: ${route.checkpoints_count || route.checkpoints?.length || 0}`,
       'Safety Compliance: Automated OpenRouteService HGV + Open-Meteo verified',
     ].join('\n')
@@ -733,6 +739,66 @@ function App() {
                           <span className="label">Est. Fuel Cost</span>
                           <span className="value">${estCost.toFixed(2)} (est)</span>
                         </div>
+                      </div>
+
+                      {/* ROADS & HIGHWAYS USED SECTION */}
+                      <div className="route-roads-section" onClick={(e) => e.stopPropagation()}>
+                        <div className="roads-section-header">
+                          <div className="roads-title-group">
+                            <span className="roads-icon">🛣️</span>
+                            <h5>Roads & Highways Used</h5>
+                            <span className="roads-count-badge">
+                              {route.roads_used ? `${route.roads_used.length} corridors` : 'Corridor path'}
+                            </span>
+                          </div>
+
+                          <div className="roads-metrics-group">
+                            {route.highway_distance_miles !== undefined && route.highway_distance_miles > 0 && (
+                              <span className="road-summary-pill highway" title="Total distance traveled on major highways and expressways">
+                                <span className="pill-dot highway-dot" />
+                                <span>{route.highway_distance_miles.toFixed(1)} mi Highway ({route.highway_percentage}%)</span>
+                              </span>
+                            )}
+                            {route.toll_distance_miles !== undefined && (
+                              <span className={`road-summary-pill ${route.has_toll_roads ? 'toll' : 'no-toll'}`} title="Toll road status">
+                                <span className={`pill-dot ${route.has_toll_roads ? 'toll-dot' : 'no-toll-dot'}`} />
+                                <span>{route.has_toll_roads ? `${route.toll_distance_miles.toFixed(1)} mi Toll Road (${route.toll_percentage}%)` : 'Toll-Free Route'}</span>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Travel-Order Road Chain Flow */}
+                        {route.roads_used && route.roads_used.length > 0 ? (
+                          <div className="roads-flow-container">
+                            <div className="roads-travel-chain">
+                              {route.roads_used.map((road, rIdx) => {
+                                const isMajor = road.is_major_road
+                                const isUnnamed = road.road_type === 'unnamed'
+                                return (
+                                  <span key={`${road.name}-${rIdx}`} className="road-chain-item">
+                                    <span
+                                      className={`road-chip ${isMajor ? 'major-road' : ''} ${isUnnamed ? 'unnamed-road' : ''}`}
+                                      title={`${road.name} • ${road.distance_miles.toFixed(1)} mi (${road.distance_meters.toFixed(0)}m)${road.instruction ? ' • ' + road.instruction : ''}`}
+                                    >
+                                      {isMajor && <span className="road-badge-major">HIGHWAY</span>}
+                                      {road.highway_refs && road.highway_refs.length > 0 && (
+                                        <span className="road-ref-tag">{road.highway_refs.join(', ')}</span>
+                                      )}
+                                      <span className="road-name-text">{road.name}</span>
+                                      <span className="road-dist-text">{road.distance_miles.toFixed(1)} mi</span>
+                                    </span>
+                                    {rIdx < (route.roads_used?.length || 0) - 1 && (
+                                      <span className="road-flow-arrow" aria-hidden="true">→</span>
+                                    )}
+                                  </span>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="roads-empty-note">Road corridor telemetry unavailable for this segment.</p>
+                        )}
                       </div>
 
                       {/* Expandable Checkpoints Table */}

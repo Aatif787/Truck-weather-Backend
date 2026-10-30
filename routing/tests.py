@@ -934,3 +934,139 @@ class RoutingAndForecastEdgeCaseTests(TestCase):
         self.assertEqual(response.data["service"], "weather-aware-truck-routing")
         self.assertIn("ors_configured", response.data)
         self.assertIn("timestamp", response.data)
+
+
+class RoadExtractionAndHighwayTests(TestCase):
+    def test_parse_route_roads_with_named_and_major_roads(self):
+        from routing.services import parse_route_roads
+
+        steps = [
+            {"name": "Wielandtstraße", "distance": 142.0, "duration": 30.0, "way_points": [0, 5], "instruction": "Turn left"},
+            {"name": "Vangerowstraße, B 37", "distance": 360.0, "duration": 40.0, "way_points": [5, 15], "instruction": "Turn left onto B 37"},
+            {"name": "B 37", "distance": 15000.0, "duration": 600.0, "way_points": [15, 100], "instruction": "Keep left onto B 37"},
+            {"name": "A 5 Autobahn", "distance": 25000.0, "duration": 900.0, "way_points": [100, 200], "instruction": "Merge onto A 5"},
+            {"name": "Main Street", "distance": 500.0, "duration": 60.0, "way_points": [200, 220], "instruction": "Turn right"},
+        ]
+
+        waycategory_summary = [
+            {"value": 1.0, "distance": 25000.0, "amount": 61.0},
+            {"value": 0.0, "distance": 16002.0, "amount": 39.0},
+        ]
+        tollways_summary = [
+            {"value": 0.0, "distance": 41002.0, "amount": 100.0},
+        ]
+
+        result = parse_route_roads(
+            steps=steps,
+            waycategory_summary=waycategory_summary,
+            tollways_summary=tollways_summary,
+            total_distance_meters=41002.0,
+        )
+
+        self.assertEqual(result["total_roads_count"], 5)
+        self.assertEqual(result["roads_travel_order"], [
+            "Wielandtstraße",
+            "Vangerowstraße, B 37",
+            "B 37",
+            "A 5 Autobahn",
+            "Main Street",
+        ])
+
+        # Major roads identified
+        major_names = [r["name"] for r in result["major_roads"]]
+        self.assertIn("Vangerowstraße, B 37", major_names)
+        self.assertIn("B 37", major_names)
+        self.assertIn("A 5 Autobahn", major_names)
+        self.assertNotIn("Wielandtstraße", major_names)
+        self.assertNotIn("Main Street", major_names)
+
+        # Highway references extracted
+        b37_road = next(r for r in result["roads"] if r["name"] == "B 37")
+        self.assertIn("B 37", b37_road["highway_refs"])
+
+        a5_road = next(r for r in result["roads"] if r["name"] == "A 5 Autobahn")
+        self.assertIn("A 5", a5_road["highway_refs"])
+        self.assertEqual(a5_road["road_type"], "motorway")
+
+        # Highway and Toll summary
+        self.assertGreater(result["highway_distance_miles"], 15.0)
+        self.assertEqual(result["toll_distance_miles"], 0.0)
+        self.assertFalse(result["has_toll_roads"])
+
+    def test_parse_route_roads_unnamed_and_missing_instructions(self):
+        from routing.services import parse_route_roads
+
+        # Test empty steps
+        empty_res = parse_route_roads([])
+        self.assertEqual(empty_res["roads"], [])
+        self.assertEqual(empty_res["roads_travel_order"], [])
+        self.assertEqual(empty_res["total_roads_count"], 0)
+
+        # Test None steps
+        none_res = parse_route_roads(None)
+        self.assertEqual(none_res["roads"], [])
+
+        # Test unnamed roads
+        steps = [
+            {"name": "-", "distance": 400.0, "duration": 25.0, "way_points": [0, 10]},
+            {"name": "", "distance": 200.0, "duration": 15.0, "way_points": [10, 20]},
+            {"name": None, "distance": 3000.0, "duration": 120.0, "way_points": [20, 50]},
+        ]
+        # Coordinates 20 to 50 are inside waycategory 1 (Motorway)
+        waycategory_values = [[0, 20, 0], [20, 50, 1]]
+
+        result = parse_route_roads(steps=steps, waycategory_values=waycategory_values)
+
+        # First two unnamed roads are local/unclassified -> "Road name unavailable"
+        # and they are consecutive so they get merged!
+        self.assertEqual(result["roads"][0]["name"], "Road name unavailable")
+        self.assertEqual(result["roads"][0]["distance_meters"], 600.0)
+        self.assertFalse(result["roads"][0]["is_major_road"])
+
+        # Third step is inside motorway waycategory -> classified as Motorway / Highway
+        self.assertEqual(result["roads"][1]["name"], "Motorway / Highway (Name unassigned)")
+        self.assertTrue(result["roads"][1]["is_major_road"])
+        self.assertEqual(result["roads"][1]["road_type"], "motorway")
+
+    def test_parse_route_roads_consecutive_duplicates_deduplication(self):
+        from routing.services import parse_route_roads
+
+        steps = [
+            {"name": "Route 66", "distance": 100.0, "duration": 10.0},
+            {"name": "Route 66", "distance": 200.0, "duration": 20.0},
+            {"name": "Route 66", "distance": 300.0, "duration": 30.0},
+            {"name": "Elm Street", "distance": 50.0, "duration": 5.0},
+            {"name": "Route 66", "distance": 400.0, "duration": 40.0},
+        ]
+
+        result = parse_route_roads(steps)
+
+        # 3 consecutive "Route 66" merged into 1, then "Elm Street", then non-consecutive "Route 66"
+        self.assertEqual(result["total_roads_count"], 3)
+        self.assertEqual(result["roads_travel_order"], ["Route 66", "Elm Street", "Route 66"])
+        self.assertEqual(result["roads"][0]["distance_meters"], 600.0)
+        self.assertEqual(result["roads"][0]["duration_seconds"], 60.0)
+        self.assertEqual(result["roads"][2]["distance_meters"], 400.0)
+
+    def test_parse_route_roads_with_tollways_and_highways(self):
+        from routing.services import parse_route_roads
+
+        steps = [
+            {"name": "I-95 Tollway", "distance": 16093.4, "duration": 600.0},
+        ]
+        waycategory_summary = [{"value": 3.0, "distance": 16093.4, "amount": 100.0}]
+        tollways_summary = [{"value": 1.0, "distance": 16093.4, "amount": 100.0}]
+
+        result = parse_route_roads(
+            steps=steps,
+            waycategory_summary=waycategory_summary,
+            tollways_summary=tollways_summary,
+            total_distance_meters=16093.4,
+        )
+
+        self.assertEqual(result["highway_distance_miles"], 10.0)
+        self.assertEqual(result["highway_percentage"], 100.0)
+        self.assertEqual(result["toll_distance_miles"], 10.0)
+        self.assertEqual(result["toll_percentage"], 100.0)
+        self.assertTrue(result["has_toll_roads"])
+        self.assertIn("I-95", result["roads"][0]["highway_refs"])

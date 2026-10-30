@@ -157,6 +157,34 @@ export function generateTripReportPdf({
 
   y += 66
 
+  // 2b. ROADS & HIGHWAYS TRAVERSED
+  if (selectedRoute.roads_used && selectedRoute.roads_used.length > 0) {
+    checkPageBreak(55)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(9.5)
+    doc.setTextColor(24, 24, 27)
+    const hwSummary = selectedRoute.highway_distance_miles !== undefined && selectedRoute.highway_distance_miles > 0
+      ? ` • ${selectedRoute.highway_distance_miles.toFixed(1)} mi on Major Highways (${selectedRoute.highway_percentage}%)`
+      : ''
+    const tollSummary = selectedRoute.has_toll_roads
+      ? ` • ${selectedRoute.toll_distance_miles?.toFixed(1)} mi Toll Roads`
+      : ' • Toll-Free Corridor'
+    doc.text(`ROADS & HIGHWAYS USED (TRAVEL ORDER)${hwSummary}${tollSummary}:`, margin, y)
+    y += 12
+
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(7.5)
+    doc.setTextColor(70, 70, 70)
+    const roadChain = selectedRoute.roads_used.map((r) => {
+      const tag = r.is_major_road ? `[${r.name}]` : r.name
+      return `${tag} (${r.distance_miles.toFixed(1)} mi)`
+    }).join('  →  ')
+
+    const splitChain = doc.splitTextToSize(roadChain, contentWidth)
+    doc.text(splitChain, margin, y)
+    y += (splitChain.length * 9.5) + 12
+  }
+
   // 3. ROUTE COMPARISON MATRIX TABLE
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(11)
@@ -397,3 +425,4 @@ export function generateTripReportPdf({
     .replace(/[^a-zA-Z0-9-_\.]/g, '_')
   doc.save(filename)
 }
+

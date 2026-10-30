@@ -2667,3 +2667,212 @@ html {
   border-color: var(--accent-primary);
   color: #FFFFFF;
 }
+
+
+/* ==========================================================================
+   ROADS & HIGHWAYS USED SECTION (ZERO BLUE DESIGN)
+   ========================================================================== */
+.route-roads-section {
+  margin-top: 1rem;
+  padding: 1rem 1.15rem;
+  background: #FAFAF9;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+.route-roads-section:hover {
+  background: #FFFFFF;
+  border-color: #D4D4D0;
+}
+
+.roads-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px dashed var(--border-color);
+}
+
+.roads-title-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.roads-icon {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.roads-title-group h5 {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.roads-count-badge {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 700;
+  background: #F4F4F5;
+  color: #71717A;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  border: 1px solid #E4E4E7;
+}
+
+.roads-metrics-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.road-summary-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.road-summary-pill.highway {
+  background: #FEF3C7;
+  color: #92400E;
+  border: 1px solid #FDE68A;
+}
+
+.road-summary-pill.toll {
+  background: #FFEDD5;
+  color: #C2410C;
+  border: 1px solid #FED7AA;
+}
+
+.road-summary-pill.no-toll {
+  background: #DCFCE7;
+  color: #15803D;
+  border: 1px solid #BBF7D0;
+}
+
+.pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.highway-dot { background-color: #D97706; }
+.toll-dot { background-color: #EA580C; }
+.no-toll-dot { background-color: #16A34A; }
+
+.roads-flow-container {
+  overflow-x: auto;
+  padding: 0.35rem 0;
+  scrollbar-width: thin;
+}
+
+.roads-travel-chain {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.road-chain-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.road-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: #FFFFFF;
+  border: 1px solid #E5E5E2;
+  border-radius: 6px;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.road-chip:hover {
+  border-color: var(--accent-primary);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+.road-chip.major-road {
+  background: #FFFBEB;
+  border: 1.5px solid #F59E0B;
+  color: #78350F;
+  font-weight: 700;
+  box-shadow: 0 1px 4px rgba(245, 158, 11, 0.12);
+}
+
+.road-chip.unnamed-road {
+  background: #F4F4F5;
+  border-style: dashed;
+  color: #71717A;
+}
+
+.road-badge-major {
+  background: #D97706;
+  color: #FFFFFF;
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+}
+
+.road-ref-tag {
+  background: #18181B;
+  color: #FAFAFA;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+}
+
+.road-name-text {
+  font-size: 0.8rem;
+}
+
+.road-dist-text {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.road-chip.major-road .road-dist-text {
+  color: #92400E;
+}
+
+.road-flow-arrow {
+  color: #A1A1AA;
+  font-size: 0.85rem;
+  font-weight: 700;
+  user-select: none;
+}
+
+.roads-empty-note {
+  font-size: 0.75rem;
+  color: #71717A;
+  margin: 0;
+  font-style: italic;
+}
