@@ -1232,3 +1232,109 @@ class RoadExtractionAndHighwayTests(TestCase):
         self.assertEqual(routes[0]["roads_travel_order"], ["Ganga Expressway (NEX)", "Local Road"])
         self.assertGreater(routes[0]["distance_miles"], 300.0)
 
+
+    @patch('routing.weather.fetch_weather_forecast')
+    def test_checkpoint_weather_values_and_risk_breakdown_contract(self, mock_fetch_weather):
+        """
+        Verifies that every checkpoint returned by the weather enrichment pipeline contains
+        the exact numeric weather values alongside their risk badges:
+        - Actual wind speed (mph) + wind risk
+        - Rain intensity (in/hr) + rain risk
+        - Snow intensity (in/hr) + snow risk
+        - Load-adjusted wind risk
+        - Combined checkpoint risk
+        Specifically tests the prompt benchmark:
+        Wind: 35.2 mph -> HIGH
+        Rain: 0.12 in -> MODERATE
+        Snow: 0.8 in -> MODERATE
+        Load-adjusted wind (>40,000 lbs): SEVERE
+        Combined Risk: SEVERE
+        """
+        dep = datetime(2026, 10, 30, 14, 0, tzinfo=timezone.utc)
+        mock_fetch_weather.return_value = [
+            {
+                "latitude": 49.4,
+                "longitude": 8.6,
+                "hourly": {
+                    "time": ["2026-10-30T14:00", "2026-10-30T15:00"],
+                    "wind_speed_10m": [35.2, 35.2],
+                    "rain": [0.12, 0.12],
+                    "snowfall": [0.8, 0.8],
+                    "temperature_2m": [58.5, 58.5],
+                    "weather_code": [3, 3],
+                    "wind_gusts_10m": [42.0, 42.0],
+                    "wind_direction_10m": [220, 220],
+                }
+            },
+            {
+                "latitude": 49.5,
+                "longitude": 8.7,
+                "hourly": {
+                    "time": ["2026-10-30T14:00", "2026-10-30T15:00"],
+                    "wind_speed_10m": [5.3, 5.3],
+                    "rain": [0.016, 0.016],
+                    "snowfall": [0.0, 0.0],
+                    "temperature_2m": [62.0, 62.0],
+                    "weather_code": [0, 0],
+                    "wind_gusts_10m": [7.8, 7.8],
+                    "wind_direction_10m": [180, 180],
+                }
+            }
+        ]
+
+        checkpoints = [
+            {
+                "checkpoint_index": 0,
+                "coordinates": [8.6, 49.4],
+                "distance_from_origin_miles": 0.0,
+                "estimated_arrival_time": dep.isoformat(),
+            },
+            {
+                "checkpoint_index": 1,
+                "coordinates": [8.7, 49.5],
+                "distance_from_origin_miles": 25.0,
+                "estimated_arrival_time": (dep + timedelta(hours=1)).isoformat(),
+            }
+        ]
+
+        # Scenario 1: Load weight 42,000 lbs (> 40k threshold where 35-44 mph escalates to SEVERE)
+        enriched = enrich_checkpoints_with_weather(
+            checkpoints=checkpoints,
+            load_weight_lbs=42000,
+            departure_datetime=dep
+        )
+
+        self.assertEqual(len(enriched), 2)
+        cp0 = enriched[0]
+
+        # Verify numeric wind speed and risk badge
+        self.assertIsNotNone(cp0["wind_speed_mph"])
+        self.assertEqual(round(cp0["wind_speed_mph"], 1), 35.2)
+        self.assertEqual(cp0["wind_risk"], HIGH)
+
+        # Verify numeric rain intensity and risk badge
+        self.assertIsNotNone(cp0["rain_intensity_in_hr"])
+        self.assertEqual(round(cp0["rain_intensity_in_hr"], 2), 0.12)
+        self.assertEqual(cp0["rain_risk"], MODERATE)
+
+        # Verify numeric snow intensity and risk badge
+        self.assertIsNotNone(cp0["snow_intensity_in_hr"])
+        self.assertEqual(round(cp0["snow_intensity_in_hr"], 1), 0.8)
+        self.assertEqual(cp0["snow_risk"], MODERATE)
+
+        # Verify load-adjusted wind risk escalates to SEVERE for >40,000 lbs
+        self.assertEqual(cp0["load_adjusted_wind_risk"], SEVERE)
+
+        # Combined risk = max(SEVERE, MODERATE, MODERATE) = SEVERE
+        self.assertEqual(cp0["final_risk"], SEVERE)
+
+        # Checkpoint 1 (low conditions: 5.3 mph wind, 0.016 rain, 0 snow)
+        cp1 = enriched[1]
+        self.assertEqual(round(cp1["wind_speed_mph"], 1), 5.3)
+        self.assertEqual(cp1["wind_risk"], LOW)
+        self.assertEqual(round(cp1["rain_intensity_in_hr"], 3), 0.016)
+        self.assertEqual(cp1["rain_risk"], LOW)
+        self.assertEqual(cp1["snow_intensity_in_hr"], 0.0)
+        self.assertEqual(cp1["snow_risk"], LOW)
+        self.assertEqual(cp1["load_adjusted_wind_risk"], LOW)
+        self.assertEqual(cp1["final_risk"], LOW)
