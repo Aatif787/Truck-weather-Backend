@@ -134,7 +134,8 @@ class RouteCalculationView(APIView):
                     total_distance_miles=dist_miles,
                     total_duration_seconds=dur_sec,
                     departure_datetime=departure_dt,
-                    sampling_interval_miles=float(sampling_interval)
+                    sampling_interval_miles=float(sampling_interval),
+                    roads_used=route.get('roads_used', [])
                 )
 
                 enriched_checkpoints = enrich_checkpoints_with_weather(

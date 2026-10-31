@@ -1,5 +1,6 @@
 import requests
 import re
+import math
 from django.conf import settings
 import logging
 
@@ -477,6 +478,7 @@ def _get_osrm_routes(origin_coords: list, dest_coords: list) -> list:
     """
     Fetches real routes and turn-by-turn road data from OpenStreetMap OSRM routing engine
     when OpenRouteService is unauthorized, quota-limited, or unavailable.
+    Guarantees up to 3 viable distinct route alternatives.
     """
     url = (
         f"http://router.project-osrm.org/route/v1/driving/"
@@ -493,6 +495,60 @@ def _get_osrm_routes(origin_coords: list, dest_coords: list) -> list:
             osrm_routes = data.get('routes', [])
             if not osrm_routes:
                 return []
+
+            # If fewer than 3 routes returned, discover an additional alternative via perpendicular offset waypoint
+            if len(osrm_routes) < 3:
+                fastest_route = min(osrm_routes, key=lambda r: float(r.get('duration', float('inf'))))
+                fastest_coords = fastest_route.get('geometry', {}).get('coordinates', [])
+                if fastest_coords:
+                    mid_idx = len(fastest_coords) // 2
+                    mx, my = fastest_coords[mid_idx][0], fastest_coords[mid_idx][1]
+                else:
+                    mx = (origin_coords[0] + dest_coords[0]) / 2.0
+                    my = (origin_coords[1] + dest_coords[1]) / 2.0
+
+                dx = dest_coords[0] - origin_coords[0]
+                dy = dest_coords[1] - origin_coords[1]
+                dist = math.hypot(dx, dy)
+
+                if dist > 0.05:
+                    existing_sets = [
+                        {(round(c[0], 3), round(c[1], 3)) for c in r.get('geometry', {}).get('coordinates', [])}
+                        for r in osrm_routes
+                    ]
+                    for sign in [1.0, -1.0]:
+                        px = mx - sign * dy * 0.08
+                        py = my + sign * dx * 0.08
+                        via_url = (
+                            f"http://router.project-osrm.org/route/v1/driving/"
+                            f"{origin_coords[0]},{origin_coords[1]};{px:.4f},{py:.4f};{dest_coords[0]},{dest_coords[1]}"
+                            f"?overview=full&geometries=geojson&steps=true"
+                        )
+                        try:
+                            via_resp = requests.get(via_url, headers=headers, timeout=8)
+                            if via_resp.status_code == 200:
+                                via_routes = via_resp.json().get('routes', [])
+                                if via_routes:
+                                    cand = via_routes[0]
+                                    cand_set = {
+                                        (round(c[0], 3), round(c[1], 3))
+                                        for c in cand.get('geometry', {}).get('coordinates', [])
+                                    }
+                                    max_overlap = 0.0
+                                    for ex_set in existing_sets:
+                                        if ex_set:
+                                            overlap = len(cand_set & ex_set) / max(len(cand_set), 1)
+                                            if overlap > max_overlap:
+                                                max_overlap = overlap
+                                    # Deduplicate: discard if geometry overlaps >85% with an existing route
+                                    if max_overlap <= 0.85:
+                                        osrm_routes.append(cand)
+                                        existing_sets.append(cand_set)
+                                        if len(osrm_routes) >= 3:
+                                            break
+                        except Exception as e:
+                            logger.debug(f"OSRM via route attempt error: {e}")
+
             parsed_routes = []
             seen_distances = set()
             for idx, r in enumerate(osrm_routes[:3]):
@@ -603,14 +659,19 @@ def get_routes(origin_coords: list, dest_coords: list) -> list:
     else:
         ors_failed = True
 
+    if len(routes) >= 3:
+        return ensure_unique_corridor_names(routes)
+
+    # If ORS failed or returned fewer than 3 routes, query OSRM routing engine with alternatives=true
+    logger.info("Querying OpenStreetMap OSRM routing engine for alternative corridors...")
+    osrm_routes = _get_osrm_routes(origin_coords, dest_coords)
+    if len(osrm_routes) >= len(routes) and osrm_routes:
+        return ensure_unique_corridor_names(osrm_routes)
+
     if routes:
         return ensure_unique_corridor_names(routes)
 
-    # If ORS failed due to auth/quota/network or missing key, trigger OSRM fallback
-    if ors_failed or not api_key:
-        logger.info("Falling back to OpenStreetMap OSRM routing engine...")
-        osrm_routes = _get_osrm_routes(origin_coords, dest_coords)
-        if osrm_routes:
-            return ensure_unique_corridor_names(osrm_routes)
+    if osrm_routes:
+        return ensure_unique_corridor_names(osrm_routes)
 
     raise ValueError("No viable truck routes could be calculated for these locations.")

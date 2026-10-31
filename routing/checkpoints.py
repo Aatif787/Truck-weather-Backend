@@ -2,6 +2,7 @@ import math
 from datetime import datetime, timedelta, timezone
 
 EARTH_RADIUS_MILES = 3958.7613
+METERS_TO_MILES = 0.000621371
 
 def haversine_distance(coord1: list[float], coord2: list[float]) -> float:
     """
@@ -22,7 +23,8 @@ def generate_checkpoints(
     total_distance_miles: float,
     total_duration_seconds: float,
     departure_datetime: datetime,
-    sampling_interval_miles: float = 25.0
+    sampling_interval_miles: float = 25.0,
+    roads_used: list[dict] | None = None
 ) -> list[dict]:
     """
     Generates route checkpoints sampled along the route geometry.
@@ -30,10 +32,29 @@ def generate_checkpoints(
     - Samples every sampling_interval_miles (10, 25, or 50 miles).
     - Guarantees the destination is included.
     - Avoids duplicate checkpoints if destination is within 1.0 mile of the last sample.
-    - Calculates distance from origin and ETA for each checkpoint.
+    - Calculates distance from origin, ETA, and road/corridor name for each checkpoint.
     """
     if not coordinates:
         return []
+
+    # Map cumulative distances to roads if roads_used provided
+    road_intervals = []
+    if roads_used:
+        cum_mi = 0.0
+        for r in roads_used:
+            dist_mi = float(r.get('distance_meters', 0.0)) * METERS_TO_MILES
+            if dist_mi <= 0 and 'distance_miles' in r:
+                dist_mi = float(r['distance_miles'])
+            start_d = cum_mi
+            end_d = cum_mi + dist_mi
+            cum_mi = end_d
+            road_intervals.append({
+                'name': r.get('name', 'Corridor Route'),
+                'highway_refs': r.get('highway_refs', []),
+                'is_major': r.get('is_major_road', False),
+                'start_miles': start_d,
+                'end_miles': end_d,
+            })
 
     # Ensure departure datetime is timezone-aware UTC
     if departure_datetime.tzinfo is None:
@@ -46,11 +67,15 @@ def generate_checkpoints(
         total_duration_seconds = (total_distance_miles / 50.0) * 3600.0 if total_distance_miles > 0 else 0.0
 
     if len(coordinates) == 1 or total_distance_miles <= 0:
+        first_road = road_intervals[0]['name'] if road_intervals else "Origin Point"
+        first_refs = road_intervals[0]['highway_refs'] if road_intervals else []
         return [{
             "checkpoint_index": 0,
             "coordinates": [round(coordinates[0][0], 6), round(coordinates[0][1], 6)],
             "distance_from_origin_miles": 0.0,
-            "estimated_arrival_time": dep_time.isoformat()
+            "estimated_arrival_time": dep_time.isoformat(),
+            "road_name": first_road,
+            "highway_refs": first_refs,
         }]
 
     # Step 1: Compute cumulative distances along the raw polyline
@@ -121,11 +146,25 @@ def generate_checkpoints(
         elapsed_sec = progress_ratio * total_duration_seconds
         eta = dep_time + timedelta(seconds=elapsed_sec)
 
+        # Match road for this target distance
+        assigned_road = None
+        for r_int in road_intervals:
+            if r_int['start_miles'] <= target_d <= r_int['end_miles'] + 0.1:
+                assigned_road = r_int
+                break
+        if not assigned_road and road_intervals:
+            assigned_road = road_intervals[-1] if target_d >= road_intervals[-1]['end_miles'] else road_intervals[0]
+
+        road_name = assigned_road['name'] if assigned_road else "Corridor Route"
+        highway_refs = assigned_road['highway_refs'] if assigned_road else []
+
         checkpoints.append({
             "checkpoint_index": idx,
             "coordinates": [round(interp_lon, 6), round(interp_lat, 6)],
             "distance_from_origin_miles": round(target_d, 2),
-            "estimated_arrival_time": eta.isoformat()
+            "estimated_arrival_time": eta.isoformat(),
+            "road_name": road_name,
+            "highway_refs": highway_refs,
         })
 
     return checkpoints

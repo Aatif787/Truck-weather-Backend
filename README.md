@@ -22,6 +22,7 @@ A production-ready web application designed for commercial truck dispatchers and
 14. [Testing & Verification](#14-testing--verification)
 15. [Known Limitations](#15-known-limitations)
 16. [Production Deployment Guide](#16-production-deployment-guide)
+17. [Walkthrough](#17-walkthrough)
 
 ---
 
@@ -348,3 +349,12 @@ npm run build
 5. Set Environment Variable:
    - `VITE_API_BASE_URL`: `https://your-app.onrender.com`
 6. Deploy!
+
+---
+
+## 17. Walkthrough
+
+Watch a comprehensive end-to-end video walkthrough demonstrating route calculation, continuous gradient heatmap rendering, 0-48h forecast timeline scrubbing, and cargo weight risk escalation:
+
+[LOOM_URL]
+
