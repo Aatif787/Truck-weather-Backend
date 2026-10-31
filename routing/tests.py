@@ -246,6 +246,15 @@ class RouteCalculationAPITests(TestCase):
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("negative", resp.data['error'])
 
+        # Load weight exceeding 45,000 lbs
+        resp = self.client.post('/api/routes/', {
+            'origin': 'New York',
+            'destination': 'Boston',
+            'load_weight_lbs': 50000
+        }, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(resp.data['error'], "'load_weight_lbs' cannot exceed 45000.")
+
         # Invalid sampling interval (not 10, 25, or 50)
         resp = self.client.post('/api/routes/', {
             'origin': 'New York',
@@ -254,6 +263,15 @@ class RouteCalculationAPITests(TestCase):
         }, format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("sampling_interval_miles", resp.data['error'])
+
+    def test_load_weight_exceeding_max_returns_400(self):
+        resp = self.client.post('/api/routes/', {
+            'origin': 'New York',
+            'destination': 'Boston',
+            'load_weight_lbs': 50000
+        }, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(resp.data['error'], "'load_weight_lbs' cannot exceed 45000.")
 
     @patch('routing.services.requests.get')
     def test_geocoding_failure_handles_gracefully(self, mock_get):

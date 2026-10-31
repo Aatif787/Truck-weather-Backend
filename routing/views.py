@@ -88,6 +88,11 @@ class RouteCalculationView(APIView):
                     {"error": "'load_weight_lbs' cannot be negative."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
+            if load_weight_lbs > 45000:
+                return Response(
+                    {"error": "'load_weight_lbs' cannot exceed 45000."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
         except (ValueError, TypeError):
             return Response(
                 {"error": "'load_weight_lbs' must be a valid number."},
