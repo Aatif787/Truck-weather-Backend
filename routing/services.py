@@ -659,19 +659,88 @@ def get_routes(origin_coords: list, dest_coords: list) -> list:
     else:
         ors_failed = True
 
-    if len(routes) >= 3:
-        return ensure_unique_corridor_names(routes)
+    if not routes and (ors_failed or not api_key):
+        logger.info("Falling back to OpenStreetMap OSRM routing engine...")
+        routes = _get_osrm_routes(origin_coords, dest_coords)
 
-    # If ORS failed or returned fewer than 3 routes, query OSRM routing engine with alternatives=true
-    logger.info("Querying OpenStreetMap OSRM routing engine for alternative corridors...")
-    osrm_routes = _get_osrm_routes(origin_coords, dest_coords)
-    if len(osrm_routes) >= len(routes) and osrm_routes:
-        return ensure_unique_corridor_names(osrm_routes)
+    # Guarantee up to 3 distinct routes via intermediate perpendicular waypoint
+    if routes and len(routes) < 3:
+        try:
+            base = routes[0]
+            coords = base.get('geometry', {}).get('coordinates', [])
+            if coords and len(coords) >= 2:
+                mid = coords[len(coords) // 2]
+                p1 = coords[max(0, len(coords) // 2 - 5)]
+                p2 = coords[min(len(coords) - 1, len(coords) // 2 + 5)]
+                dx, dy = (p2[0] - p1[0]), (p2[1] - p1[1])
+                L = math.sqrt(dx * dx + dy * dy) or 1.0
+                perp = (-dy / L, dx / L)
+                total_mi = base.get('distance_miles', 0.0)
+                offset_deg = (0.08 * total_mi) / 69.0
+                waypoint = [mid[0] + perp[0] * offset_deg, mid[1] + perp[1] * offset_deg]
+
+                parsed = None
+                if (not ors_failed) and api_key:
+                    body_wp = {
+                        'coordinates': [origin_coords, waypoint, dest_coords],
+                        'instructions': True,
+                        'extra_info': ['waycategory', 'tollways'],
+                        'preference': 'recommended'
+                    }
+                    try:
+                        r_wp = requests.post(ORS_DIRECTIONS_HGV_URL, json=body_wp, headers=headers, timeout=15)
+                        if r_wp.status_code == 400 and 'extra_info' in r_wp.text:
+                            body_wp_simple = dict(body_wp)
+                            body_wp_simple.pop('extra_info', None)
+                            r_wp = requests.post(ORS_DIRECTIONS_HGV_URL, json=body_wp_simple, headers=headers, timeout=15)
+                        if r_wp.status_code == 200:
+                            f_list = r_wp.json().get('features', [])
+                            if f_list:
+                                parsed = _parse_feature(f_list[0], len(routes) + 1, origin_coords, dest_coords)
+                    except Exception as e_ors:
+                        logger.warning(f"ORS waypoint alternative attempt failed: {e_ors}")
+                else:
+                    o_lon, o_lat = origin_coords[0], origin_coords[1]
+                    w_lon, w_lat = waypoint[0], waypoint[1]
+                    d_lon, d_lat = dest_coords[0], dest_coords[1]
+                    osrm_wp_url = (
+                        f"http://router.project-osrm.org/route/v1/driving/"
+                        f"{o_lon},{o_lat};{w_lon:.5f},{w_lat:.5f};{d_lon},{d_lat}"
+                        f"?overview=full&geometries=geojson&steps=true"
+                    )
+                    osrm_headers = {
+                        'User-Agent': 'SpotterFleetRoute/2.5 (Commercial HGV Logistics Engine; https://truck-weather-frontend-waqe.vercel.app)'
+                    }
+                    try:
+                        osrm_resp = requests.get(osrm_wp_url, headers=osrm_headers, timeout=10)
+                        if osrm_resp.status_code == 200:
+                            osrm_data = osrm_resp.json()
+                            osrm_wp_routes = osrm_data.get('routes', [])
+                            if osrm_wp_routes:
+                                parsed = _parse_osrm_route(osrm_wp_routes[0], len(routes) + 1, origin_coords, dest_coords)
+                    except Exception as e_osrm:
+                        logger.warning(f"OSRM waypoint alternative attempt failed: {e_osrm}")
+
+                if parsed:
+                    sig = (round(parsed['distance_miles'], 1), round(parsed['duration_seconds'], 1))
+                    existing_sigs = {
+                        (round(r['distance_miles'], 1), round(r['duration_seconds'], 1))
+                        for r in routes
+                    }
+                    is_dup = sig in existing_sigs
+                    if not is_dup:
+                        for existing in routes:
+                            ex_dist = existing['distance_miles']
+                            if ex_dist > 0 and abs(parsed['distance_miles'] - ex_dist) / ex_dist < 0.02:
+                                is_dup = True
+                                break
+                    if not is_dup:
+                        routes.append(parsed)
+                        routes = ensure_unique_corridor_names(routes)
+        except Exception as e:
+            logger.warning(f"Failed to generate alternative corridor via waypoint: {e}")
 
     if routes:
         return ensure_unique_corridor_names(routes)
-
-    if osrm_routes:
-        return ensure_unique_corridor_names(osrm_routes)
 
     raise ValueError("No viable truck routes could be calculated for these locations.")

@@ -354,7 +354,5 @@ npm run build
 
 ## 17. Walkthrough
 
-Watch a comprehensive end-to-end video walkthrough demonstrating route calculation, continuous gradient heatmap rendering, 0-48h forecast timeline scrubbing, and cargo weight risk escalation:
-
-[LOOM_URL]
+Loom video: [LOOM_URL]
 
