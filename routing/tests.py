@@ -246,14 +246,14 @@ class RouteCalculationAPITests(TestCase):
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("negative", resp.data['error'])
 
-        # Load weight exceeding 45,000 lbs
+        # Non-numeric load weight
         resp = self.client.post('/api/routes/', {
             'origin': 'New York',
             'destination': 'Boston',
-            'load_weight_lbs': 50000
+            'load_weight_lbs': "heavy"
         }, format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(resp.data['error'], "'load_weight_lbs' cannot exceed 45000.")
+        self.assertIn("valid number", resp.data['error'])
 
         # Invalid sampling interval (not 10, 25, or 50)
         resp = self.client.post('/api/routes/', {
@@ -264,14 +264,100 @@ class RouteCalculationAPITests(TestCase):
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("sampling_interval_miles", resp.data['error'])
 
-    def test_load_weight_exceeding_max_returns_400(self):
-        resp = self.client.post('/api/routes/', {
-            'origin': 'New York',
-            'destination': 'Boston',
-            'load_weight_lbs': 50000
-        }, format='json')
-        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(resp.data['error'], "'load_weight_lbs' cannot exceed 45000.")
+    @patch('routing.views.geocode_location')
+    @patch('routing.views.get_routes')
+    @patch('routing.weather.requests.get')
+    def test_cargo_weights_below_at_and_above_45k_accepted(self, mock_weather, mock_routes, mock_geocode):
+        mock_geocode.side_effect = lambda place: {
+            "name": place,
+            "coordinates": [8.55, 49.45] if "Origin" in place else [8.68, 49.40],
+        }
+        mock_routes.return_value = [
+            {
+                "id": "route-1",
+                "name": "Route 1",
+                "distance_miles": 15.0,
+                "duration_seconds": 1200,
+                "geometry": {"type": "LineString", "coordinates": [[8.55, 49.45], [8.68, 49.40]]},
+                "start_coordinates": [8.55, 49.45],
+                "destination_coordinates": [8.68, 49.40],
+            }
+        ]
+        mock_weather.return_value.status_code = 200
+        mock_weather.return_value.json.return_value = {
+            "hourly": {
+                "time": ["2026-10-31T12:00"],
+                "wind_speed_10m": [15.0],
+                "wind_gusts_10m": [20.0],
+                "wind_direction_10m": [180],
+                "precipitation": [0.0],
+                "snowfall": [0.0],
+                "temperature_2m": [65.0],
+                "weather_code": [0]
+            }
+        }
+
+        # Test spectrum: below 45k (20k, 35k), exactly 45k, above 45k (50k, 65k, 80k), and very heavy (120k)
+        test_weights = [0, 20000, 35000, 45000, 50000, 65000, 80000, 120000]
+        for w in test_weights:
+            resp = self.client.post('/api/routes/', {
+                'origin': 'Origin City',
+                'destination': 'Dest City',
+                'load_weight_lbs': w,
+                'departure_datetime': '2026-10-31T12:00:00Z',
+                'sampling_interval_miles': 25,
+            }, format='json')
+            self.assertEqual(
+                resp.status_code,
+                status.HTTP_200_OK,
+                f"Cargo weight {w} lbs should be accepted, got {resp.status_code}: {resp.data}"
+            )
+            self.assertEqual(resp.data['load_weight_lbs'], float(w))
+
+    def test_configurable_regulatory_cargo_weight_limit(self):
+        from django.conf import settings
+        original_setting = getattr(settings, 'MAX_CARGO_WEIGHT_LBS', None)
+        try:
+            # Set a fleet/regulatory limit of 80,000 lbs (standard interstate statutory limit)
+            settings.MAX_CARGO_WEIGHT_LBS = 80000.0
+
+            # 85,000 lbs should be rejected when limit is active
+            resp = self.client.post('/api/routes/', {
+                'origin': 'New York',
+                'destination': 'Boston',
+                'load_weight_lbs': 85000
+            }, format='json')
+            self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+            self.assertIn("regulatory/fleet limit", resp.data['error'])
+            self.assertIn("80,000", resp.data['error'])
+        finally:
+            settings.MAX_CARGO_WEIGHT_LBS = original_setting
+
+    def test_risk_thresholds_for_weights_below_and_above_45k(self):
+        from routing.risk_engine import apply_load_wind_rule, calculate_wind_risk, LOW, MODERATE, HIGH, SEVERE, NO_TRAVEL
+
+        # 1. Weight 20,000 lbs (<= 30k standard): standard wind thresholds apply
+        self.assertEqual(apply_load_wind_rule(40.0, 20000, calculate_wind_risk(40.0)), HIGH)
+        self.assertEqual(apply_load_wind_rule(50.0, 20000, calculate_wind_risk(50.0)), SEVERE)
+        self.assertEqual(apply_load_wind_rule(56.0, 20000, calculate_wind_risk(56.0)), NO_TRAVEL)
+
+        # 2. Weight 35,000 lbs (> 30k, <= 40k heavy): 45-54 mph escalates to NO_TRAVEL
+        self.assertEqual(apply_load_wind_rule(40.0, 35000, calculate_wind_risk(40.0)), HIGH)
+        self.assertEqual(apply_load_wind_rule(50.0, 35000, calculate_wind_risk(50.0)), NO_TRAVEL)
+
+        # 3. Weight 45,000 lbs (> 40k severe): 35-44 mph escalates to SEVERE, 45-54 NO_TRAVEL
+        self.assertEqual(apply_load_wind_rule(40.0, 45000, calculate_wind_risk(40.0)), SEVERE)
+        self.assertEqual(apply_load_wind_rule(50.0, 45000, calculate_wind_risk(50.0)), NO_TRAVEL)
+
+        # 4. Weight 65,000 lbs (above 45k): continues working as severe load tier
+        self.assertEqual(apply_load_wind_rule(30.0, 65000, calculate_wind_risk(30.0)), MODERATE)
+        self.assertEqual(apply_load_wind_rule(40.0, 65000, calculate_wind_risk(40.0)), SEVERE)
+        self.assertEqual(apply_load_wind_rule(50.0, 65000, calculate_wind_risk(50.0)), NO_TRAVEL)
+
+        # 5. Very heavy permitted load: 120,000 lbs: severe rules apply correctly
+        self.assertEqual(apply_load_wind_rule(40.0, 120000, calculate_wind_risk(40.0)), SEVERE)
+        self.assertEqual(apply_load_wind_rule(50.0, 120000, calculate_wind_risk(50.0)), NO_TRAVEL)
+        self.assertEqual(apply_load_wind_rule(56.0, 120000, calculate_wind_risk(56.0)), NO_TRAVEL)
 
     @patch('routing.services.requests.get')
     def test_geocoding_failure_handles_gracefully(self, mock_get):

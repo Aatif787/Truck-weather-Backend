@@ -107,3 +107,12 @@ else:
 
 # Third-party API keys (loaded strictly from environment variables)
 OPENROUTESERVICE_API_KEY = os.getenv('OPENROUTESERVICE_API_KEY', '')
+
+# Regulatory & Fleet Cargo Weight Limit (lbs)
+# Source: US Federal Bridge Formula B & state commercial vehicle regulations.
+# Standard interstate statutory limit without permits is 80,000 lbs GVW.
+# Heavy-haul and multi-axle combinations (e.g. Michigan 164,000 lbs) operate under special permits.
+# Default: None (unbounded, allowing standard Class 8 trailers, containers, and permitted superloads).
+# Can be configured via environment variable MAX_CARGO_WEIGHT_LBS (e.g. '80000').
+max_cargo_env = os.getenv('MAX_CARGO_WEIGHT_LBS')
+MAX_CARGO_WEIGHT_LBS = float(max_cargo_env) if max_cargo_env else None

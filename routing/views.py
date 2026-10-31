@@ -88,9 +88,11 @@ class RouteCalculationView(APIView):
                     {"error": "'load_weight_lbs' cannot be negative."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            if load_weight_lbs > 45000:
+            # Optional configurable regulatory/fleet cargo weight limit
+            max_cargo_weight = getattr(settings, 'MAX_CARGO_WEIGHT_LBS', None)
+            if max_cargo_weight is not None and load_weight_lbs > max_cargo_weight:
                 return Response(
-                    {"error": "'load_weight_lbs' cannot exceed 45000."},
+                    {"error": f"'load_weight_lbs' cannot exceed regulatory/fleet limit of {max_cargo_weight:,.0f} lbs."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
         except (ValueError, TypeError):
